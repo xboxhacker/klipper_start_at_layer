@@ -57,6 +57,8 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
                 self.handle_download_file(post_data)
             elif self.path == '/api/process':
                 self.handle_process_gcode(post_data)
+            elif self.path == '/api/terminate':
+                self.handle_terminate_server(post_data)
             else:
                 self.send_404()
                 
@@ -335,6 +337,8 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             notification_file = '/tmp/layer_resume_queue.txt'
             with open(notification_file, 'w') as f:
                 f.write(f"QUEUED: {filepath}\n")
+                f.write(f"TIME: 2025-07-08 14:34:48 UTC\n")
+                f.write(f"USER: xboxhacker\n")
                 f.write(f"FILENAME: {filename}\n")
             
             self.send_json_response({
@@ -407,6 +411,45 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self.send_error_response(f"Failed to process G-code: {str(e)}")
     
+    def handle_terminate_server(self, post_data):
+        """Handle immediate server termination requests."""
+        try:
+            print("\n" + "🛑" * 30)
+            print("🛑 IMMEDIATE SERVER TERMINATION REQUESTED")
+            print("🛑 Time: 2025-07-08 14:34:48 UTC")
+            print("🛑 User: xboxhacker")
+            print("🛑 Reason: Manual termination via GUI button")
+            print("🛑" * 30)
+            
+            # Send success response first
+            self.send_json_response({
+                'success': True,
+                'message': 'Server termination initiated',
+                'timestamp': '2025-07-08 14:34:48 UTC',
+                'user': 'xboxhacker'
+            })
+            
+            # Cancel any existing shutdown timer
+            global shutdown_timer
+            if shutdown_timer:
+                shutdown_timer.cancel()
+                print("⏰ Cancelled automatic shutdown timer")
+            
+            # Schedule immediate shutdown in 2 seconds (gives time for response to send)
+            def immediate_shutdown():
+                print("🛑 Executing immediate server shutdown...")
+                global server_instance
+                if server_instance:
+                    threading.Thread(target=server_instance.shutdown, daemon=True).start()
+                os._exit(0)
+            
+            shutdown_timer = threading.Timer(2.0, immediate_shutdown)
+            shutdown_timer.start()
+            
+        except Exception as e:
+            print(f"Error in server termination: {e}")
+            self.send_error_response(f"Failed to terminate server: {str(e)}")
+    
     def send_json_response(self, data):
         """Send a JSON response."""
         self.send_response(200)
@@ -462,6 +505,7 @@ def schedule_server_shutdown():
     print("🔄 File processing completed successfully!")
     print("⏰ Server will automatically shutdown in 30 seconds")
     print("💾 You can download or queue the file before shutdown")
+    print("🛑 Click 'Terminate Server' button for immediate shutdown")
     print("⏰" * 20 + "\n")
 
 def find_layer_change_heights(content):
@@ -601,6 +645,8 @@ def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exe
         f"; Original file: {original_filename}\n",
         f"; Target Z Height: {target_z}mm\n",
         f"; Actual Start Z: {actual_z}mm\n",
+        f"; Modified on: 2025-07-08 14:34:48 UTC\n",
+        f"; Modified by: xboxhacker\n",
         f"; G28 homing commands removed (before target): {g28_count}\n",
         f"; ALL Z-moves removed (before target): {z_moves_count}\n",
         f"; Executable blocks processed (before target): {exec_blocks_count}\n",
@@ -739,11 +785,14 @@ def start_web_server(port=8081, open_browser_tab_flag=True):
     print("=" * 70)
     print("🔄 Layer Resume Web GUI Server Starting")
     print("=" * 70)
+    print(f"📅 Date: 2025-07-08 14:34:48 UTC")
+    print(f"👤 User: xboxhacker")
     print(f"🌐 Server: http://0.0.0.0:{available_port}")
     print(f"📁 G-codes Directory: /home/biqu/printer_data/gcodes")
     print(f"🏠 Home Directory: /home/biqu")
     print(f"📄 HTML File: /home/biqu/printer_data/config/START_AT_LAYER/layer_resume_gui.html")
     print("⏰ Auto-shutdown: Server will close 30 seconds after processing")
+    print("🛑 Manual shutdown: Use 'Terminate Server' button in GUI")
     print("=" * 70)
     
     # Print access URLs
@@ -766,6 +815,7 @@ def start_web_server(port=8081, open_browser_tab_flag=True):
     
     print("⚠️  Press Ctrl+C to stop the server manually")
     print("⏰ Server will auto-shutdown 30 seconds after file processing")
+    print("🛑 Or use 'Terminate Server' button in GUI for immediate shutdown")
     print("")
     
     try:
@@ -805,6 +855,7 @@ Features:
   - ONLY modifies content BEFORE selected layer height
   - Comments out ALL Z-moves before target layer (including in executable blocks)
   - Auto-shutdown 30 seconds after file processing
+  - Manual termination button in GUI
         """
     )
     
