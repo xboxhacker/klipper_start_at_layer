@@ -40,7 +40,7 @@ When a 3D print fails, this tool helps you resume from a specific layer by:
 
 ### Setup Instructions
 
-1. **Create directory structure:**
+1. **Create directory structure:** (Change this DIR for your device)
 ```bash
 mkdir -p /home/biqu/printer_data/config/START_AT_LAYER
 cd /home/biqu/printer_data/config/START_AT_LAYER
