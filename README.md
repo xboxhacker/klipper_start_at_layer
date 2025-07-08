@@ -71,11 +71,12 @@ wget https://raw.githubusercontent.com/username/repo/main/layer_resume_gui.html
 python3 start_at_layer_web.py --web
 ```
 
-### OR
+### 🛠️ ALTERNATIVE INSTALLATION (recommended)
 
 1. **Create directory `START_AT_LAYER` In Mainsail/Fluidd in the `Config` Directory**
 
 2. **Upload or Drag & Drop files to the `config/START_AT_LAYER` Directory**
+
 
 
 ## 🎯 Usage
