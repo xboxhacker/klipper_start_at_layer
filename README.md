@@ -19,7 +19,7 @@ A web-based GUI tool for resuming failed 3D prints at specific layer heights. De
 - **Network Accessible** - Works with headless printer setups
 - **Mainsail/Fluidd Compatible** - Perfect for modern Klipper installations
 
-** YOUR KLIPPER SYSTEM WILL BE UNRESPONIVE WHILE THE SERVER IS RUNNING **
+**YOUR KLIPPER SYSTEM WILL BE UNRESPONIVE WHILE THE SERVER IS RUNNING**
   
 ## 📋 What It Does
 
