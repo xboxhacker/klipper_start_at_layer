@@ -1,0 +1,1226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Layer Resume Tool</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        
+        .container {
+            background: #2d2d2d;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        
+        h1 {
+            color: #4CAF50;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 15px;
+            align-items: end;
+        }
+        
+        .form-col {
+            flex: 1;
+        }
+        
+        .form-col-auto {
+            flex: 0 0 auto;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #cccccc;
+        }
+        
+        input[type="text"], input[type="number"], select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background-color: #3d3d3d;
+            color: #ffffff;
+            font-size: 16px;
+            box-sizing: border-box;
+        }
+        
+        input[type="text"]:focus, input[type="number"]:focus, select:focus {
+            outline: none;
+            border-color: #4CAF50;
+            box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+        }
+        
+        select {
+            cursor: pointer;
+        }
+        
+        select option {
+            background-color: #3d3d3d;
+            color: #ffffff;
+        }
+        
+        .button {
+            background-color: #4CAF50;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-right: 10px;
+            margin-bottom: 10px;
+            transition: background-color 0.3s;
+        }
+        
+        .button:hover {
+            background-color: #45a049;
+        }
+        
+        .button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        
+        .button.secondary {
+            background-color: #2196F3;
+        }
+        
+        .button.secondary:hover {
+            background-color: #1976D2;
+        }
+        
+        .button.warning {
+            background-color: #ff9800;
+        }
+        
+        .button.warning:hover {
+            background-color: #f57c00;
+        }
+        
+        .button.success {
+            background-color: #2e7d32;
+        }
+        
+        .button.success:hover {
+            background-color: #1b5e20;
+        }
+        
+        .button.small {
+            padding: 8px 16px;
+            font-size: 14px;
+        }
+        
+        .file-browser {
+            background: #3d3d3d;
+            border-radius: 4px;
+            padding: 16px;
+            margin: 10px 0;
+        }
+        
+        .path-nav {
+            background: #2d2d2d;
+            border-radius: 4px;
+            padding: 8px 12px;
+            margin-bottom: 12px;
+            font-family: monospace;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .path-segment {
+            color: #4CAF50;
+            cursor: pointer;
+            text-decoration: underline;
+            margin-right: 5px;
+        }
+        
+        .path-segment:hover {
+            color: #45a049;
+        }
+        
+        .path-separator {
+            color: #888;
+            margin: 0 2px;
+        }
+        
+        .quick-nav {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        
+        .file-list {
+            max-height: 350px;
+            overflow-y: auto;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #2d2d2d;
+        }
+        
+        .file-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid #555;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .file-item:hover {
+            background-color: #4d4d4d;
+        }
+        
+        .file-item.selected {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        
+        .file-icon {
+            font-size: 16px;
+            width: 20px;
+            text-align: center;
+        }
+        
+        .file-name {
+            flex: 1;
+            font-weight: 500;
+        }
+        
+        .file-size {
+            color: #aaa;
+            font-size: 12px;
+            min-width: 60px;
+        }
+        
+        .file-date {
+            color: #aaa;
+            font-size: 12px;
+            min-width: 120px;
+        }
+        
+        .sync-indicator {
+            color: #4CAF50;
+            font-size: 14px;
+            margin-left: 10px;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+        
+        .sync-indicator.show {
+            opacity: 1;
+        }
+        
+        .z-height-section {
+            background: #3d3d3d;
+            border-radius: 4px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+        
+        .z-height-section h3 {
+            margin-top: 0;
+            color: #4CAF50;
+        }
+        
+        .preview-section {
+            background: #3d3d3d;
+            border-radius: 4px;
+            padding: 16px;
+            margin: 20px 0;
+            display: none;
+        }
+        
+        .layer-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background: #2d2d2d;
+        }
+        
+        .layer-item {
+            padding: 8px 12px;
+            border-bottom: 1px solid #555;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        
+        .layer-item:hover {
+            background-color: #4d4d4d;
+        }
+        
+        .layer-item.selected {
+            background-color: #4CAF50;
+            color: white;
+        }
+        
+        .layer-item:last-child {
+            border-bottom: none;
+        }
+        
+        .status {
+            margin: 20px 0;
+            padding: 12px;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        .status.success {
+            background-color: #2e7d32;
+            border: 1px solid #4caf50;
+        }
+        
+        .status.error {
+            background-color: #c62828;
+            border: 1px solid #f44336;
+        }
+        
+        .status.info {
+            background-color: #1565c0;
+            border: 1px solid #2196f3;
+        }
+        
+        .file-info {
+            background: #3d3d3d;
+            border-radius: 4px;
+            padding: 12px;
+            margin: 10px 0;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        
+        .file-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .stat-item {
+            background: #2d2d2d;
+            padding: 8px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        
+        .stat-value {
+            font-size: 18px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #cccccc;
+        }
+        
+        .progress {
+            width: 100%;
+            height: 20px;
+            background-color: #555;
+            border-radius: 10px;
+            margin: 10px 0;
+            overflow: hidden;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background-color: #4CAF50;
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+        
+        .checklist {
+            background: #3d3d3d;
+            border-radius: 4px;
+            padding: 16px;
+            margin: 20px 0;
+        }
+        
+        .checklist h3 {
+            color: #ff9800;
+            margin-top: 0;
+        }
+        
+        .checklist ul {
+            margin: 0;
+            padding-left: 20px;
+        }
+        
+        .checklist li {
+            margin: 8px 0;
+            line-height: 1.4;
+        }
+        
+        .layer-range-info {
+            background: #2d2d2d;
+            border-radius: 4px;
+            padding: 12px;
+            margin: 10px 0;
+            font-size: 14px;
+        }
+        
+        .layer-range-info .range-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 4px 0;
+        }
+        
+        .actions-section {
+            background: #3d3d3d;
+            border-radius: 4px;
+            padding: 16px;
+            margin: 20px 0;
+            display: none;
+        }
+        
+        .actions-section h3 {
+            margin-top: 0;
+            color: #ff9800;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        @media (max-width: 768px) {
+            .form-row {
+                flex-direction: column;
+                gap: 10px;
+            }
+            
+            .file-stats {
+                grid-template-columns: 1fr 1fr;
+            }
+            
+            .file-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 5px;
+            }
+            
+            .file-date {
+                min-width: auto;
+            }
+            
+            .quick-nav {
+                justify-content: center;
+            }
+            
+            .action-buttons {
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔄 Layer Resume Tool</h1>
+        
+        <form id="resumeForm">
+            <div class="form-group">
+                <div class="form-row">
+                    <div class="form-col">
+                        <label for="filePath">G-code File Path:</label>
+                        <input type="text" id="filePath" placeholder="/home/biqu/printer_data/gcodes/my_print.gcode" readonly>
+                    </div>
+                    <div class="form-col-auto">
+                        <label>&nbsp;</label>
+                        <button type="button" class="button secondary" id="browseBtn">
+                            📁 Browse Files
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="file-browser" id="fileBrowser" style="display: none;">
+                    <div class="quick-nav">
+                        <button type="button" class="button small secondary" id="homeBtn">🏠 Home</button>
+                        <button type="button" class="button small secondary" id="gcodesBtn">📄 G-codes</button>
+                        <button type="button" class="button small warning" id="refreshBtn">🔄 Refresh</button>
+                    </div>
+                    
+                    <div class="path-nav" id="pathNav">
+                        <span>📁</span>
+                        <span id="currentPath">/home/biqu/printer_data/gcodes</span>
+                    </div>
+                    
+                    <div class="file-list" id="fileList">
+                        <div class="file-item">
+                            <div class="file-icon">⏳</div>
+                            <div class="file-name">Loading files...</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="file-info" id="fileInfo" style="display: none;"></div>
+            </div>
+            
+            <div class="z-height-section" id="zHeightSection" style="display: none;">
+                <h3>📏 Select Layer to Start From</h3>
+                
+                <div class="form-row">
+                    <div class="form-col">
+                        <label for="zLayerDropdown">Choose from Available Layers (LAYER_CHANGE):</label>
+                        <select id="zLayerDropdown" disabled>
+                            <option value="">Select a layer...</option>
+                        </select>
+                    </div>
+                    <div class="form-col-auto">
+                        <label>&nbsp;</label>
+                        <span class="sync-indicator" id="syncIndicator">✓ Synced</span>
+                    </div>
+                </div>
+                
+                <div class="form-row" style="margin-top: 15px;">
+                    <div class="form-col">
+                        <label for="targetZ">Or Enter Z Height Manually (mm):</label>
+                        <input type="number" id="targetZ" step="0.1" min="0.1" placeholder="e.g., 5.0" required>
+                    </div>
+                    <div class="form-col-auto">
+                        <label>&nbsp;</label>
+                        <button type="button" class="button small secondary" id="findNearestBtn" disabled>
+                            🎯 Find Nearest
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="layer-range-info" id="layerRangeInfo" style="display: none;">
+                    <div class="range-item">
+                        <span>First Layer:</span>
+                        <span id="firstLayer">-</span>
+                    </div>
+                    <div class="range-item">
+                        <span>Last Layer:</span>
+                        <span id="lastLayer">-</span>
+                    </div>
+                    <div class="range-item">
+                        <span>Total Layers:</span>
+                        <span id="totalLayers">-</span>
+                    </div>
+                    <div class="range-item">
+                        <span>Layer Method:</span>
+                        <span id="layerMethod">-</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <button type="button" class="button secondary" id="previewBtn" disabled>
+                    📋 Preview Layers
+                </button>
+                <button type="submit" class="button" id="processBtn" disabled>
+                    🚀 Process G-code
+                </button>
+            </div>
+        </form>
+        
+        <div class="actions-section" id="actionsSection">
+            <h3>🎯 Ready to Print!</h3>
+            <p>Your modified G-code file has been processed and saved. Choose your next action:</p>
+            <div class="action-buttons">
+                <button type="button" class="button success" id="queuePrintBtn">
+                    🖨️ Queue for Printing
+                </button>
+                <button type="button" class="button secondary" id="downloadBtn">
+                    💾 Download File
+                </button>
+                <button type="button" class="button warning" id="createAnotherBtn">
+                    🔄 Process Another File
+                </button>
+            </div>
+            <div class="file-stats" id="processStats" style="display: none;">
+                <div class="stat-item">
+                    <div class="stat-value" id="statG28Count">0</div>
+                    <div class="stat-label">G28 Commands Removed</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statZMovesCount">0</div>
+                    <div class="stat-label">Z-Moves Removed</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statCommentedLines">0</div>
+                    <div class="stat-label">Lines Commented Out</div>
+                </div>
+                <div class="stat-item">
+                    <div class="stat-value" id="statActualZ">0</div>
+                    <div class="stat-label">Actual Start Z (mm)</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="preview-section" id="previewSection">
+            <h3>📋 Layer Preview</h3>
+            <div class="layer-list" id="layerList"></div>
+            <p><em>Click on a layer to select it as the target Z height</em></p>
+        </div>
+        
+        <div class="status" id="statusDiv"></div>
+        
+        <div id="progressSection" style="display: none;">
+            <h3>⚙️ Processing...</h3>
+            <div class="progress">
+                <div class="progress-bar" id="progressBar"></div>
+            </div>
+            <div id="progressText">Initializing...</div>
+        </div>
+        
+        <div class="checklist">
+            <h3>⚠️ Before Starting Resume Print:</h3>
+            <ul>
+                <li>✓ G28 homing commands will be removed</li>
+                <li>✓ Z-moves in executable blocks will be disabled</li>
+                <li>⚠️ Heat hotend and bed to proper temperatures FIRST</li>
+                <li>⚠️ Manually home axes if needed (G28 X, G28 Y separately)</li>
+                <li>⚠️ Position nozzle near the resume point</li>
+                <li>⚠️ Ensure filament is loaded and extruder is primed</li>
+                <li>⚠️ Monitor the first few layers carefully</li>
+                <li>⚠️ Z-axis initialization has been bypassed</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        class LayerResumeGUI {
+            constructor() {
+                this.currentFilePath = null;
+                this.currentDirectory = '/home/biqu/printer_data/gcodes';
+                this.processedFilePath = null;
+                this.processedContent = null;
+                this.originalContent = null;
+                this.layers = [];
+                this.layerMethod = 'unknown';
+                this.isUpdating = false;
+                this.serverUrl = window.location.origin;
+                this.initializeEventListeners();
+            }
+
+            initializeEventListeners() {
+                document.getElementById('browseBtn').addEventListener('click', this.toggleFileBrowser.bind(this));
+                document.getElementById('homeBtn').addEventListener('click', () => this.loadDirectory('/home/biqu'));
+                document.getElementById('gcodesBtn').addEventListener('click', () => this.loadDirectory('/home/biqu/printer_data/gcodes'));
+                document.getElementById('refreshBtn').addEventListener('click', this.refreshDirectory.bind(this));
+                document.getElementById('zLayerDropdown').addEventListener('change', this.handleDropdownChange.bind(this));
+                document.getElementById('targetZ').addEventListener('input', this.handleManualInput.bind(this));
+                document.getElementById('findNearestBtn').addEventListener('click', this.findNearestLayer.bind(this));
+                document.getElementById('previewBtn').addEventListener('click', this.previewLayers.bind(this));
+                document.getElementById('resumeForm').addEventListener('submit', this.processGcode.bind(this));
+                document.getElementById('queuePrintBtn').addEventListener('click', this.queueForPrinting.bind(this));
+                document.getElementById('downloadBtn').addEventListener('click', this.downloadFile.bind(this));
+                document.getElementById('createAnotherBtn').addEventListener('click', this.resetInterface.bind(this));
+            }
+
+            async toggleFileBrowser() {
+                const browser = document.getElementById('fileBrowser');
+                if (browser.style.display === 'none' || browser.style.display === '') {
+                    browser.style.display = 'block';
+                    await this.loadDirectory(this.currentDirectory);
+                } else {
+                    browser.style.display = 'none';
+                }
+            }
+
+            async refreshDirectory() {
+                await this.loadDirectory(this.currentDirectory);
+            }
+
+            async loadDirectory(path) {
+                this.currentDirectory = path;
+                this.updatePathDisplay(path);
+                
+                try {
+                    const files = await this.fetchDirectoryContents(path);
+                    this.displayFiles(files);
+                } catch (error) {
+                    console.error('Error loading directory:', error);
+                    this.showStatus(`❌ Error loading directory: ${error.message}`, 'error');
+                }
+            }
+
+            updatePathDisplay(path) {
+                const pathNav = document.getElementById('currentPath');
+                const pathParts = path.split('/').filter(part => part);
+                
+                let pathHTML = '<span class="path-segment" data-path="/">/</span>';
+                let currentPath = '';
+                
+                pathParts.forEach((part, index) => {
+                    currentPath += '/' + part;
+                    pathHTML += `<span class="path-separator">/</span><span class="path-segment" data-path="${currentPath}">${part}</span>`;
+                });
+                
+                pathNav.innerHTML = pathHTML;
+                
+                // Add click handlers to path segments
+                pathNav.querySelectorAll('.path-segment').forEach(segment => {
+                    segment.addEventListener('click', () => {
+                        const targetPath = segment.getAttribute('data-path');
+                        this.loadDirectory(targetPath === '/' ? '/' : targetPath);
+                    });
+                });
+            }
+
+            async fetchDirectoryContents(path) {
+                const response = await fetch(`${this.serverUrl}/api/files`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: path })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const result = await response.json();
+                return result;
+            }
+
+            displayFiles(files) {
+                const fileList = document.getElementById('fileList');
+                fileList.innerHTML = '';
+                
+                files.forEach(file => {
+                    const item = document.createElement('div');
+                    item.className = 'file-item';
+                    
+                    const icon = file.type === 'directory' ? '📁' : 
+                                file.name.toLowerCase().endsWith('.gcode') ? '📄' : '📋';
+                    
+                    const size = file.type === 'directory' ? '' : this.formatFileSize(file.size);
+                    
+                    item.innerHTML = `
+                        <div class="file-icon">${icon}</div>
+                        <div class="file-name">${file.name}</div>
+                        <div class="file-size">${size}</div>
+                        <div class="file-date">${file.modified}</div>
+                    `;
+                    
+                    item.addEventListener('click', () => {
+                        this.handleFileClick(file, item);
+                    });
+                    
+                    fileList.appendChild(item);
+                });
+            }
+
+            handleFileClick(file, itemElement) {
+                // Clear previous selections
+                document.querySelectorAll('.file-item.selected').forEach(item => {
+                    item.classList.remove('selected');
+                });
+                
+                // Mark this item as selected
+                itemElement.classList.add('selected');
+                
+                if (file.type === 'directory') {
+                    if (file.name === '..') {
+                        const parentPath = this.currentDirectory.split('/').slice(0, -1).join('/') || '/';
+                        this.loadDirectory(parentPath);
+                    } else {
+                        this.loadDirectory(`${this.currentDirectory}/${file.name}`);
+                    }
+                } else if (file.name.toLowerCase().endsWith('.gcode')) {
+                    this.selectFile(`${this.currentDirectory}/${file.name}`, file);
+                }
+            }
+
+            formatFileSize(bytes) {
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                if (bytes === 0) return '0 B';
+                const i = Math.floor(Math.log(bytes) / Math.log(1024));
+                return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+            }
+
+            async selectFile(filepath, fileInfo) {
+                this.currentFilePath = filepath;
+                document.getElementById('filePath').value = filepath;
+                
+                // Hide file browser
+                document.getElementById('fileBrowser').style.display = 'none';
+                
+                // Show file info
+                this.displayFileInfo(fileInfo);
+                
+                // Try to load and analyze the file
+                try {
+                    this.originalContent = await this.loadFileContent(filepath);
+                    await this.analyzeLayers(this.originalContent);
+                } catch (error) {
+                    console.error('Error loading/analyzing file:', error);
+                    this.showStatus(`❌ Error analyzing file: ${error.message}`, 'error');
+                }
+                
+                this.showStatus(`✅ Selected file: ${fileInfo.name}`, 'success');
+            }
+
+            displayFileInfo(fileInfo) {
+                const fileInfoDiv = document.getElementById('fileInfo');
+                if (fileInfoDiv) {
+                    fileInfoDiv.innerHTML = `
+                        📄 <strong>${fileInfo.name}</strong><br>
+                        📊 Size: ${this.formatFileSize(fileInfo.size)}<br>
+                        📅 Modified: ${fileInfo.modified}
+                    `;
+                    fileInfoDiv.style.display = 'block';
+                }
+            }
+
+            async loadFileContent(filepath) {
+                const response = await fetch(`${this.serverUrl}/api/file-content`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filepath: filepath })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to load file content: ${response.statusText}`);
+                }
+                
+                const content = await response.text();
+                return content;
+            }
+
+            async analyzeLayers(content) {
+                try {
+                    const response = await fetch(`${this.serverUrl}/api/analyze-layers`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: content })
+                    });
+                    
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        console.error('Server error response:', errorText);
+                        throw new Error(`Failed to analyze layers: ${response.status} ${response.statusText}`);
+                    }
+                    
+                    const data = await response.json();
+                    this.layers = data.layers || [];
+                    this.populateLayerDropdown();
+                    
+                } catch (error) {
+                    console.error('Error in analyzeLayers:', error);
+                    this.showStatus(`❌ Error analyzing layers: ${error.message}`, 'error');
+                    throw error;
+                }
+            }
+
+            populateLayerDropdown() {
+                const dropdown = document.getElementById('zLayerDropdown');
+                const zHeightSection = document.getElementById('zHeightSection');
+                const layerRangeInfo = document.getElementById('layerRangeInfo');
+                
+                if (!dropdown) {
+                    console.error('Dropdown element not found!');
+                    return;
+                }
+                
+                // Clear existing options
+                dropdown.innerHTML = '<option value="">Select a layer...</option>';
+                
+                if (this.layers.length === 0) {
+                    dropdown.disabled = true;
+                    this.layerMethod = 'No LAYER_CHANGE found';
+                    this.showStatus('⚠️ No LAYER_CHANGE comments found in file. You can still enter Z height manually.', 'info');
+                } else {
+                    // Add layer options
+                    this.layers.forEach((layer, index) => {
+                        const option = document.createElement('option');
+                        option.value = layer.zHeight;
+                        option.textContent = `Layer ${index + 1} - Z:${layer.zHeight}mm`;
+                        dropdown.appendChild(option);
+                    });
+                    
+                    dropdown.disabled = false;
+                    this.layerMethod = 'LAYER_CHANGE comments';
+                    
+                    // Update layer range info
+                    if (layerRangeInfo) {
+                        document.getElementById('firstLayer').textContent = `Z:${this.layers[0].zHeight}mm`;
+                        document.getElementById('lastLayer').textContent = `Z:${this.layers[this.layers.length - 1].zHeight}mm`;
+                        document.getElementById('totalLayers').textContent = this.layers.length;
+                        document.getElementById('layerMethod').textContent = this.layerMethod;
+                        layerRangeInfo.style.display = 'block';
+                    }
+                    
+                    this.showStatus(`✅ Found ${this.layers.length} layers in file`, 'success');
+                }
+                
+                // Show the Z height section
+                if (zHeightSection) {
+                    zHeightSection.style.display = 'block';
+                }
+                
+                // Enable buttons
+                document.getElementById('previewBtn').disabled = false;
+                document.getElementById('processBtn').disabled = false;
+                document.getElementById('findNearestBtn').disabled = false;
+            }
+
+            handleDropdownChange() {
+                const dropdown = document.getElementById('zLayerDropdown');
+                const targetZInput = document.getElementById('targetZ');
+                const syncIndicator = document.getElementById('syncIndicator');
+                
+                if (dropdown.value) {
+                    this.isUpdating = true;
+                    targetZInput.value = dropdown.value;
+                    this.isUpdating = false;
+                    
+                    // Show sync indicator
+                    syncIndicator.classList.add('show');
+                    setTimeout(() => {
+                        syncIndicator.classList.remove('show');
+                    }, 2000);
+                }
+            }
+
+            handleManualInput() {
+                if (this.isUpdating) return;
+                
+                const targetZInput = document.getElementById('targetZ');
+                const dropdown = document.getElementById('zLayerDropdown');
+                
+                // Clear dropdown selection when manually typing
+                dropdown.value = '';
+            }
+
+            findNearestLayer() {
+                const targetZInput = document.getElementById('targetZ');
+                const dropdown = document.getElementById('zLayerDropdown');
+                const targetZ = parseFloat(targetZInput.value);
+                
+                if (isNaN(targetZ) || this.layers.length === 0) {
+                    this.showStatus('⚠️ Please enter a valid Z height', 'info');
+                    return;
+                }
+                
+                // Find nearest layer
+                let nearestLayer = this.layers[0];
+                let minDiff = Math.abs(targetZ - nearestLayer.zHeight);
+                
+                this.layers.forEach(layer => {
+                    const diff = Math.abs(targetZ - layer.zHeight);
+                    if (diff < minDiff) {
+                        minDiff = diff;
+                        nearestLayer = layer;
+                    }
+                });
+                
+                // Update dropdown and input
+                this.isUpdating = true;
+                dropdown.value = nearestLayer.zHeight;
+                targetZInput.value = nearestLayer.zHeight;
+                this.isUpdating = false;
+                
+                this.showStatus(`🎯 Found nearest layer at Z:${nearestLayer.zHeight}mm`, 'success');
+            }
+
+            previewLayers() {
+                const previewSection = document.getElementById('previewSection');
+                const layerList = document.getElementById('layerList');
+                
+                if (this.layers.length === 0) {
+                    this.showStatus('⚠️ No layers to preview', 'info');
+                    return;
+                }
+                
+                layerList.innerHTML = '';
+                
+                this.layers.forEach((layer, index) => {
+                    const item = document.createElement('div');
+                    item.className = 'layer-item';
+                    item.innerHTML = `Layer ${index + 1}: Z:${layer.zHeight}mm (Line ${layer.lineNumber})`;
+                    
+                    item.addEventListener('click', () => {
+                        // Clear previous selections
+                        document.querySelectorAll('.layer-item.selected').forEach(el => {
+                            el.classList.remove('selected');
+                        });
+                        
+                        // Select this item
+                        item.classList.add('selected');
+                        
+                        // Update form
+                        this.isUpdating = true;
+                        document.getElementById('zLayerDropdown').value = layer.zHeight;
+                        document.getElementById('targetZ').value = layer.zHeight;
+                        this.isUpdating = false;
+                        
+                        this.showStatus(`✅ Selected layer ${index + 1} at Z:${layer.zHeight}mm`, 'success');
+                    });
+                    
+                    layerList.appendChild(item);
+                });
+                
+                previewSection.style.display = 'block';
+            }
+
+            async processGcode(event) {
+                event.preventDefault();
+                
+                const targetZInput = document.getElementById('targetZ');
+                const targetZ = parseFloat(targetZInput.value);
+                
+                if (!this.currentFilePath) {
+                    this.showStatus('⚠️ Please select a G-code file first', 'error');
+                    return;
+                }
+                
+                if (!this.originalContent) {
+                    this.showStatus('⚠️ No file content loaded', 'error');
+                    return;
+                }
+                
+                if (isNaN(targetZ) || targetZ <= 0) {
+                    this.showStatus('⚠️ Please enter a valid Z height', 'error');
+                    return;
+                }
+                
+                try {
+                    // Show progress
+                    this.showProgress(0, 'Starting G-code processing...');
+                    
+                    const originalFilename = this.currentFilePath.split('/').pop();
+                    
+                    const response = await fetch(`${this.serverUrl}/api/process`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            content: this.originalContent,
+                            target_z: targetZ,
+                            original_filename: originalFilename
+                        })
+                    });
+                    
+                    this.showProgress(50, 'Processing G-code...');
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || `Server error: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    this.showProgress(75, 'Saving processed file...');
+                    
+                    // Save the processed file
+                    const saveResponse = await fetch(`${this.serverUrl}/api/save-file`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            filename: result.filename,
+                            content: result.content,
+                            directory: this.currentDirectory
+                        })
+                    });
+                    
+                    this.showProgress(100, 'Processing complete!');
+                    
+                    if (!saveResponse.ok) {
+                        const errorData = await saveResponse.json();
+                        throw new Error(errorData.error || `Failed to save file: ${saveResponse.status}`);
+                    }
+                    
+                    const saveResult = await saveResponse.json();
+                    
+                    this.processedFilePath = saveResult.filepath;
+                    this.processedContent = result.content;
+                    
+                    // Update UI with results
+                    this.displayProcessingResults(result);
+                    
+                    this.hideProgress();
+                    this.showStatus(`✅ G-code processed successfully! Saved as: ${result.filename}`, 'success');
+                    
+                } catch (error) {
+                    console.error('Error processing G-code:', error);
+                    this.hideProgress();
+                    this.showStatus(`❌ Error processing G-code: ${error.message}`, 'error');
+                }
+            }
+
+            displayProcessingResults(result) {
+                const actionsSection = document.getElementById('actionsSection');
+                const processStats = document.getElementById('processStats');
+                const stats = result.stats;
+                
+                // Update statistics
+                document.getElementById('statG28Count').textContent = stats.g28_count;
+                document.getElementById('statZMovesCount').textContent = stats.z_moves_count;
+                document.getElementById('statCommentedLines').textContent = stats.commented_lines;
+                document.getElementById('statActualZ').textContent = `${stats.actual_z}mm`;
+                
+                // Show sections
+                processStats.style.display = 'grid';
+                actionsSection.style.display = 'block';
+            }
+
+            async queueForPrinting() {
+                if (!this.processedFilePath) {
+                    this.showStatus('⚠️ Please process a G-code file first', 'error');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`${this.serverUrl}/api/queue-print`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            filepath: this.processedFilePath
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || `Server error: ${response.status}`);
+                    }
+                    
+                    const result = await response.json();
+                    this.showStatus(`✅ ${result.message}`, 'success');
+                    
+                } catch (error) {
+                    console.error('Error queueing for print:', error);
+                    this.showStatus(`❌ Error queueing for print: ${error.message}`, 'error');
+                }
+            }
+
+            async downloadFile() {
+                if (!this.processedFilePath) {
+                    this.showStatus('⚠️ Please process a G-code file first', 'error');
+                    return;
+                }
+                
+                try {
+                    const response = await fetch(`${this.serverUrl}/api/download-file`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            filepath: this.processedFilePath
+                        })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Download failed: ${response.status}`);
+                    }
+                    
+                    // Create download
+                    const blob = await response.blob();
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = this.processedFilePath.split('/').pop();
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                    
+                    this.showStatus('✅ File downloaded successfully', 'success');
+                    
+                } catch (error) {
+                    console.error('Error downloading file:', error);
+                    this.showStatus(`❌ Error downloading file: ${error.message}`, 'error');
+                }
+            }
+
+            resetInterface() {
+                // Reset the interface
+                this.currentFilePath = null;
+                this.processedFilePath = null;
+                this.processedContent = null;
+                this.originalContent = null;
+                this.layers = [];
+                
+                document.getElementById('filePath').value = '';
+                document.getElementById('zHeightSection').style.display = 'none';
+                document.getElementById('previewSection').style.display = 'none';
+                document.getElementById('actionsSection').style.display = 'none';
+                document.getElementById('fileInfo').style.display = 'none';
+                document.getElementById('processStats').style.display = 'none';
+                document.getElementById('layerRangeInfo').style.display = 'none';
+                document.getElementById('targetZ').value = '';
+                document.getElementById('zLayerDropdown').innerHTML = '<option value="">Select a layer...</option>';
+                document.getElementById('zLayerDropdown').disabled = true;
+                
+                // Disable buttons
+                document.getElementById('previewBtn').disabled = true;
+                document.getElementById('processBtn').disabled = true;
+                document.getElementById('findNearestBtn').disabled = true;
+                
+                this.showStatus('🔄 Interface reset', 'success');
+            }
+
+            showProgress(percentage, text) {
+                const progressSection = document.getElementById('progressSection');
+                const progressBar = document.getElementById('progressBar');
+                const progressText = document.getElementById('progressText');
+                
+                progressSection.style.display = 'block';
+                progressBar.style.width = `${percentage}%`;
+                progressText.textContent = text;
+            }
+
+            hideProgress() {
+                const progressSection = document.getElementById('progressSection');
+                progressSection.style.display = 'none';
+            }
+
+            showStatus(message, type = 'info') {
+                const statusDiv = document.getElementById('statusDiv');
+                if (statusDiv) {
+                    statusDiv.textContent = message;
+                    statusDiv.className = `status ${type}`;
+                    statusDiv.style.display = 'block';
+                    
+                    // Auto-hide after 5 seconds for success messages
+                    if (type === 'success') {
+                        setTimeout(() => {
+                            statusDiv.style.display = 'none';
+                        }, 5000);
+                    }
+                }
+            }
+        }
+
+        // Initialize the GUI when the page loads
+        document.addEventListener('DOMContentLoaded', function() {
+            try {
+                window.layerResumeGUI = new LayerResumeGUI();
+            } catch (error) {
+                console.error('Error initializing LayerResumeGUI:', error);
+            }
+        });
+    </script>
+</body>
+</html>
