@@ -116,6 +116,14 @@
             background-color: #f57c00;
         }
         
+        .button.danger {
+            background-color: #f44336;
+        }
+        
+        .button.danger:hover {
+            background-color: #d32f2f;
+        }
+        
         .button.success {
             background-color: #2e7d32;
         }
@@ -415,6 +423,25 @@
             flex-wrap: wrap;
         }
         
+        .server-control {
+            background: #3d3d3d;
+            border-radius: 4px;
+            padding: 16px;
+            margin: 20px 0;
+            border: 1px solid #555;
+        }
+        
+        .server-control h3 {
+            margin-top: 0;
+            color: #f44336;
+        }
+        
+        .server-control p {
+            margin: 8px 0;
+            color: #cccccc;
+            font-size: 14px;
+        }
+        
         @media (max-width: 768px) {
             .form-row {
                 flex-direction: column;
@@ -596,6 +623,14 @@
             <div id="progressText">Initializing...</div>
         </div>
         
+        <div class="server-control">
+            <h3>🛑 Server Control</h3>
+            <p>Stop the Layer Resume Tool server when you're done using it.</p>
+            <button type="button" class="button danger" id="terminateServerBtn">
+                🛑 Terminate Server
+            </button>
+        </div>
+        
         <div class="checklist">
             <h3>⚠️ Before Starting Resume Print:</h3>
             <ul>
@@ -639,6 +674,7 @@
                 document.getElementById('queuePrintBtn').addEventListener('click', this.queueForPrinting.bind(this));
                 document.getElementById('downloadBtn').addEventListener('click', this.downloadFile.bind(this));
                 document.getElementById('createAnotherBtn').addEventListener('click', this.resetInterface.bind(this));
+                document.getElementById('terminateServerBtn').addEventListener('click', this.terminateServer.bind(this));
             }
 
             async toggleFileBrowser() {
@@ -998,98 +1034,102 @@
                     return;
                 }
                 
-                if (!this.originalContent) {
-                    this.showStatus('⚠️ No file content loaded', 'error');
-                    return;
-                }
-                
                 if (isNaN(targetZ) || targetZ <= 0) {
                     this.showStatus('⚠️ Please enter a valid Z height', 'error');
                     return;
                 }
                 
+                this.showProgressSection();
+                
                 try {
-                    // Show progress
-                    this.showProgress(0, 'Starting G-code processing...');
+                    this.updateProgress(20, 'Loading G-code content...');
                     
-                    const originalFilename = this.currentFilePath.split('/').pop();
+                    const requestData = {
+                        content: this.originalContent,
+                        target_z: targetZ,
+                        original_filename: this.currentFilePath
+                    };
+                    
+                    this.updateProgress(40, 'Processing G-code...');
                     
                     const response = await fetch(`${this.serverUrl}/api/process`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            content: this.originalContent,
-                            target_z: targetZ,
-                            original_filename: originalFilename
-                        })
+                        body: JSON.stringify(requestData)
                     });
                     
-                    this.showProgress(50, 'Processing G-code...');
-                    
                     if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error || `Server error: ${response.status}`);
+                        throw new Error(`Processing failed: ${response.status} ${response.statusText}`);
                     }
+                    
+                    this.updateProgress(80, 'Finalizing...');
                     
                     const result = await response.json();
                     
-                    this.showProgress(75, 'Saving processed file...');
-                    
-                    // Save the processed file
-                    const saveResponse = await fetch(`${this.serverUrl}/api/save-file`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            filename: result.filename,
-                            content: result.content,
-                            directory: this.currentDirectory
-                        })
-                    });
-                    
-                    this.showProgress(100, 'Processing complete!');
-                    
-                    if (!saveResponse.ok) {
-                        const errorData = await saveResponse.json();
-                        throw new Error(errorData.error || `Failed to save file: ${saveResponse.status}`);
+                    if (result.success) {
+                        this.processedFilePath = result.output_file;
+                        this.processedContent = result.processed_content;
+                        
+                        this.updateProgress(100, 'Complete!');
+                        
+                        // Show success message
+                        this.showStatus(`✅ G-code processed successfully! Output: ${result.output_file}`, 'success');
+                        
+                        // Show action buttons
+                        this.showActionsSection(result.stats);
+                        
+                        // Hide progress after delay
+                        setTimeout(() => {
+                            this.hideProgressSection();
+                        }, 1500);
+                        
+                    } else {
+                        throw new Error(result.error || 'Processing failed');
                     }
-                    
-                    const saveResult = await saveResponse.json();
-                    
-                    this.processedFilePath = saveResult.filepath;
-                    this.processedContent = result.content;
-                    
-                    // Update UI with results
-                    this.displayProcessingResults(result);
-                    
-                    this.hideProgress();
-                    this.showStatus(`✅ G-code processed successfully! Saved as: ${result.filename}`, 'success');
                     
                 } catch (error) {
                     console.error('Error processing G-code:', error);
-                    this.hideProgress();
                     this.showStatus(`❌ Error processing G-code: ${error.message}`, 'error');
+                    this.hideProgressSection();
                 }
             }
 
-            displayProcessingResults(result) {
+            showProgressSection() {
+                const progressSection = document.getElementById('progressSection');
+                progressSection.style.display = 'block';
+            }
+
+            hideProgressSection() {
+                const progressSection = document.getElementById('progressSection');
+                progressSection.style.display = 'none';
+            }
+
+            updateProgress(percent, text) {
+                const progressBar = document.getElementById('progressBar');
+                const progressText = document.getElementById('progressText');
+                
+                progressBar.style.width = `${percent}%`;
+                progressText.textContent = text;
+            }
+
+            showActionsSection(stats) {
                 const actionsSection = document.getElementById('actionsSection');
                 const processStats = document.getElementById('processStats');
-                const stats = result.stats;
                 
-                // Update statistics
-                document.getElementById('statG28Count').textContent = stats.g28_count;
-                document.getElementById('statZMovesCount').textContent = stats.z_moves_count;
-                document.getElementById('statCommentedLines').textContent = stats.commented_lines;
-                document.getElementById('statActualZ').textContent = `${stats.actual_z}mm`;
+                if (stats) {
+                    document.getElementById('statG28Count').textContent = stats.g28_count || 0;
+                    document.getElementById('statZMovesCount').textContent = stats.z_moves_count || 0;
+                    document.getElementById('statCommentedLines').textContent = stats.commented_lines || 0;
+                    document.getElementById('statActualZ').textContent = stats.actual_z || 0;
+                    processStats.style.display = 'block';
+                }
                 
-                // Show sections
-                processStats.style.display = 'grid';
                 actionsSection.style.display = 'block';
             }
 
             async queueForPrinting() {
                 if (!this.processedFilePath) {
-                    this.showStatus('⚠️ Please process a G-code file first', 'error');
+                    this.showStatus('⚠️ No processed file available', 'error');
                     return;
                 }
                 
@@ -1097,28 +1137,30 @@
                     const response = await fetch(`${this.serverUrl}/api/queue-print`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            filepath: this.processedFilePath
-                        })
+                        body: JSON.stringify({ filepath: this.processedFilePath })
                     });
                     
                     if (!response.ok) {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error || `Server error: ${response.status}`);
+                        throw new Error(`Failed to queue print: ${response.statusText}`);
                     }
                     
                     const result = await response.json();
-                    this.showStatus(`✅ ${result.message}`, 'success');
+                    
+                    if (result.success) {
+                        this.showStatus(`✅ ${result.message}`, 'success');
+                    } else {
+                        throw new Error(result.error || 'Failed to queue print');
+                    }
                     
                 } catch (error) {
-                    console.error('Error queueing for print:', error);
-                    this.showStatus(`❌ Error queueing for print: ${error.message}`, 'error');
+                    console.error('Error queuing print:', error);
+                    this.showStatus(`❌ Error queuing print: ${error.message}`, 'error');
                 }
             }
 
             async downloadFile() {
                 if (!this.processedFilePath) {
-                    this.showStatus('⚠️ Please process a G-code file first', 'error');
+                    this.showStatus('⚠️ No processed file available', 'error');
                     return;
                 }
                 
@@ -1126,16 +1168,13 @@
                     const response = await fetch(`${this.serverUrl}/api/download-file`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            filepath: this.processedFilePath
-                        })
+                        body: JSON.stringify({ filepath: this.processedFilePath })
                     });
                     
                     if (!response.ok) {
-                        throw new Error(`Download failed: ${response.status}`);
+                        throw new Error(`Failed to download: ${response.statusText}`);
                     }
                     
-                    // Create download
                     const blob = await response.blob();
                     const url = window.URL.createObjectURL(blob);
                     const a = document.createElement('a');
@@ -1155,71 +1194,98 @@
             }
 
             resetInterface() {
-                // Reset the interface
+                // Reset form
+                document.getElementById('resumeForm').reset();
+                
+                // Reset state
                 this.currentFilePath = null;
                 this.processedFilePath = null;
                 this.processedContent = null;
                 this.originalContent = null;
                 this.layers = [];
                 
-                document.getElementById('filePath').value = '';
+                // Hide sections
                 document.getElementById('zHeightSection').style.display = 'none';
-                document.getElementById('previewSection').style.display = 'none';
                 document.getElementById('actionsSection').style.display = 'none';
+                document.getElementById('previewSection').style.display = 'none';
                 document.getElementById('fileInfo').style.display = 'none';
-                document.getElementById('processStats').style.display = 'none';
                 document.getElementById('layerRangeInfo').style.display = 'none';
-                document.getElementById('targetZ').value = '';
-                document.getElementById('zLayerDropdown').innerHTML = '<option value="">Select a layer...</option>';
-                document.getElementById('zLayerDropdown').disabled = true;
                 
-                // Disable buttons
+                // Reset buttons
                 document.getElementById('previewBtn').disabled = true;
                 document.getElementById('processBtn').disabled = true;
                 document.getElementById('findNearestBtn').disabled = true;
                 
-                this.showStatus('🔄 Interface reset', 'success');
-            }
-
-            showProgress(percentage, text) {
-                const progressSection = document.getElementById('progressSection');
-                const progressBar = document.getElementById('progressBar');
-                const progressText = document.getElementById('progressText');
+                // Clear status
+                this.hideStatus();
                 
-                progressSection.style.display = 'block';
-                progressBar.style.width = `${percentage}%`;
-                progressText.textContent = text;
+                this.showStatus('🔄 Interface reset - ready for new file', 'info');
             }
 
-            hideProgress() {
-                const progressSection = document.getElementById('progressSection');
-                progressSection.style.display = 'none';
-            }
-
-            showStatus(message, type = 'info') {
-                const statusDiv = document.getElementById('statusDiv');
-                if (statusDiv) {
-                    statusDiv.textContent = message;
-                    statusDiv.className = `status ${type}`;
-                    statusDiv.style.display = 'block';
-                    
-                    // Auto-hide after 5 seconds for success messages
-                    if (type === 'success') {
-                        setTimeout(() => {
-                            statusDiv.style.display = 'none';
-                        }, 5000);
-                    }
+            async terminateServer() {
+                if (!confirm('Are you sure you want to terminate the server? This will close the Layer Resume Tool.')) {
+                    return;
                 }
+                
+                try {
+                    const response = await fetch(`${this.serverUrl}/api/terminate`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ reason: 'User requested termination via GUI' })
+                    });
+                    
+                    if (response.ok) {
+                        const result = await response.json();
+                        this.showStatus(`✅ ${result.message}`, 'success');
+                        
+                        // Show countdown message
+                        setTimeout(() => {
+                            this.showStatus('🛑 Server terminating in 2 seconds...', 'info');
+                        }, 1000);
+                        
+                        // The server will terminate itself after 2 seconds
+                        setTimeout(() => {
+                            document.body.innerHTML = `
+                                <div style="text-align: center; padding: 50px; background: #1a1a1a; color: #ffffff; font-family: Arial, sans-serif;">
+                                    <h1 style="color: #f44336;">🛑 Server Terminated</h1>
+                                    <p>The Layer Resume Tool server has been terminated.</p>
+                                    <p>You can close this browser window.</p>
+                                </div>
+                            `;
+                        }, 3000);
+                    } else {
+                        throw new Error(`Failed to terminate server: ${response.statusText}`);
+                    }
+                    
+                } catch (error) {
+                    console.error('Error terminating server:', error);
+                    this.showStatus(`❌ Error terminating server: ${error.message}`, 'error');
+                }
+            }
+
+            showStatus(message, type) {
+                const statusDiv = document.getElementById('statusDiv');
+                statusDiv.textContent = message;
+                statusDiv.className = `status ${type}`;
+                statusDiv.style.display = 'block';
+                
+                // Auto-hide after 5 seconds for success/info messages
+                if (type === 'success' || type === 'info') {
+                    setTimeout(() => {
+                        this.hideStatus();
+                    }, 5000);
+                }
+            }
+
+            hideStatus() {
+                const statusDiv = document.getElementById('statusDiv');
+                statusDiv.style.display = 'none';
             }
         }
 
-        // Initialize the GUI when the page loads
-        document.addEventListener('DOMContentLoaded', function() {
-            try {
-                window.layerResumeGUI = new LayerResumeGUI();
-            } catch (error) {
-                console.error('Error initializing LayerResumeGUI:', error);
-            }
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', () => {
+            new LayerResumeGUI();
         });
     </script>
 </body>
