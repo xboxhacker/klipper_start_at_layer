@@ -202,9 +202,13 @@ G1 Z5.2 F720
 Add this to your `printer.cfg`:
 
 ```ini
+###############################################################
+# Resume failed print with a "start at layer" option
+###############################################################
+
 [gcode_shell_command start_layer_resume]
 command: python3 /home/biqu/printer_data/config/START_AT_LAYER/start_at_layer_web.py --web --no-browser
-timeout: 300.0
+timeout: 120.0  #Server timeout to kill the server
 verbose: True
 
 [gcode_macro LAYER_RESUME_GUI]
