@@ -35,9 +35,10 @@ When a 3D print fails, this tool helps you resume from a specific layer by:
 
 ### Prerequisites
 
-- Linux system (Raspberry Pi, etc.)
+- Linux system (Raspberry Pi, BTT Pi, etc.)
 - Python 3.6 or higher
-- Klipper firmware (recommended)
+- Klipper firmware
+- MoonRaker
 - Mainsail or Fluidd web interface (recommended)
 
 ### Setup Instructions
@@ -69,6 +70,13 @@ wget https://raw.githubusercontent.com/username/repo/main/layer_resume_gui.html
 ```bash
 python3 start_at_layer_web.py --web
 ```
+
+### OR
+
+1. **Create directory `START_AT_LAYER` In Mainsail/Fluidd in the `Config` Directory**
+
+2. **Upload or Drag & Drop files to the `config/START_AT_LAYER` Directory**
+
 
 ## 🎯 Usage
 
