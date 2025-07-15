@@ -217,15 +217,17 @@ Add this to your `printer.cfg`:
 
 [gcode_shell_command start_layer_resume]
 command: python3 /home/biqu/printer_data/config/START_AT_LAYER/start_at_layer_web.py --web --no-browser
-timeout: 120.0  #Server timeout to kill the server
+timeout: 1000.0  #Server timeout to kill the server
 verbose: True
 
 [gcode_macro LAYER_RESUME_GUI]
 description: Start Layer Resume Web GUI
 gcode:
     RESPOND MSG="Starting Layer Resume GUI..."
+    RESPOND MSG="Layer Resume GUI: http://YOURPRINTER.local:8081"
+    RESPOND MSG="Open this link to use the GUI. Shut down the GUI server when you're done."
     RUN_SHELL_COMMAND CMD=start_layer_resume
-    RESPOND MSG="Layer Resume GUI: http://mainsail.local:8081"
+    
 ```
 
 ### Usage in Mainsail
