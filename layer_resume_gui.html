@@ -63,6 +63,31 @@
             box-sizing: border-box;
         }
         
+        input[type="checkbox"] {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+            margin-right: 8px;
+            accent-color: #4CAF50;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            margin: 15px 0;
+            padding: 12px;
+            background: #2d2d2d;
+            border-radius: 4px;
+        }
+        
+        .checkbox-group label {
+            margin: 0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            flex: 1;
+        }
+        
         input[type="text"]:focus, input[type="number"]:focus, select:focus {
             outline: none;
             border-color: #4CAF50;
@@ -543,6 +568,13 @@
                     </div>
                 </div>
                 
+                <div class="checkbox-group">
+                    <label for="skipSupport">
+                        <input type="checkbox" id="skipSupport" checked>
+                        <span>Skip printing support material (Support & Support interface) - go directly to printing the part shells</span>
+                    </label>
+                </div>
+                
                 <div class="layer-range-info" id="layerRangeInfo" style="display: none;">
                     <div class="range-item">
                         <span>First Layer:</span>
@@ -675,6 +707,7 @@
                 document.getElementById('downloadBtn').addEventListener('click', this.downloadFile.bind(this));
                 document.getElementById('createAnotherBtn').addEventListener('click', this.resetInterface.bind(this));
                 document.getElementById('terminateServerBtn').addEventListener('click', this.terminateServer.bind(this));
+                document.getElementById('skipSupport').addEventListener('change', this.handleSkipSupportChange.bind(this));
             }
 
             async toggleFileBrowser() {
@@ -952,6 +985,17 @@
                 dropdown.value = '';
             }
 
+            async handleSkipSupportChange() {
+                // No need to re-analyze - this only affects processing, not layer detection
+                // Just show a status message
+                const skipSupport = document.getElementById('skipSupport').checked;
+                if (skipSupport) {
+                    this.showStatus('ℹ️ Support material will be skipped when processing G-code', 'info');
+                } else {
+                    this.showStatus('ℹ️ Support material will be included when processing G-code', 'info');
+                }
+            }
+
             findNearestLayer() {
                 const targetZInput = document.getElementById('targetZ');
                 const dropdown = document.getElementById('zLayerDropdown');
@@ -1028,6 +1072,7 @@
                 
                 const targetZInput = document.getElementById('targetZ');
                 const targetZ = parseFloat(targetZInput.value);
+                const skipSupport = document.getElementById('skipSupport').checked;
                 
                 if (!this.currentFilePath) {
                     this.showStatus('⚠️ Please select a G-code file first', 'error');
@@ -1047,7 +1092,8 @@
                     const requestData = {
                         content: this.originalContent,
                         target_z: targetZ,
-                        original_filename: this.currentFilePath
+                        original_filename: this.currentFilePath,
+                        skip_support: skipSupport
                     };
                     
                     this.updateProgress(40, 'Processing G-code...');

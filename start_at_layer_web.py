@@ -394,6 +394,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             content = data.get('content', '')
             target_z = float(data.get('target_z', 0))
             original_filename = data.get('original_filename', 'unknown.gcode')
+            skip_support = data.get('skip_support', False)
             
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             print(f"Error parsing request: {e}")
@@ -402,7 +403,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         
         try:
             # Process the G-code
-            result = process_gcode_content(content, target_z, original_filename)
+            result = process_gcode_content(content, target_z, original_filename, skip_support=skip_support)
             self.send_json_response(result)
             
         except Exception as e:
@@ -509,7 +510,14 @@ def schedule_server_shutdown():
     print("⏰" * 20 + "\n")
 
 def find_layer_change_heights(content):
-    """Find all LAYER_CHANGE comments with Z heights."""
+    """Find all LAYER_CHANGE comments with Z heights.
+    
+    Args:
+        content: G-code content as string or list of lines
+    
+    Returns:
+        List of layer info dictionaries
+    """
     layer_lines = []
     lines = content if isinstance(content, list) else content.split('\n')
     
@@ -630,6 +638,69 @@ def comment_out_layers(content, start_line, end_line):
     
     return modified_content
 
+def comment_out_support_sections_after_target(content, target_line):
+    """Comment out support and support interface sections after the target layer.
+    
+    Args:
+        content: List of G-code lines
+        target_line: Line number (0-based) where target layer starts
+    
+    Returns:
+        Tuple of (modified_content, support_sections_commented)
+    """
+    modified_content = content[:]
+    
+    # Patterns to match support layer types (multiple slicer formats)
+    # Orca Slicer: ;TYPE:Support, ;TYPE:Support interface
+    # PrusaSlicer/SuperSlicer: ;TYPE:SUPPORT, ;TYPE:SUPPORT-INTERFACE
+    # Cura: ;TYPE:SUPPORT, ;TYPE:SUPPORT-INTERFACE
+    support_type_pattern = re.compile(
+        r';\s*TYPE:\s*(?:Support|SUPPORT|Support\s+interface|SUPPORT\s*[-_]?INTERFACE)',
+        re.IGNORECASE
+    )
+    
+    # Pattern to match any TYPE: comment
+    type_pattern = re.compile(r';\s*TYPE:', re.IGNORECASE)
+    
+    support_sections_commented = 0
+    i = target_line
+    
+    while i < len(modified_content):
+        line = modified_content[i].strip()
+        
+        # Check if this line starts a support section
+        if support_type_pattern.search(line):
+            # Found a support section - comment it out until we find a non-support TYPE
+            section_start = i
+            
+            # Look ahead to find where this support section ends
+            # It ends when we find a TYPE: that is NOT support
+            j = i + 1
+            while j < len(modified_content):
+                next_line = modified_content[j].strip()
+                
+                # Check if we found a TYPE: comment
+                if type_pattern.search(next_line):
+                    # If it's not a support type, this is where the support section ends
+                    if not support_type_pattern.search(next_line):
+                        break
+                    # If it's another support type, continue (might be support interface after support)
+                
+                j += 1
+            
+            # Comment out the support section (from section_start to j-1, or end of file)
+            end_line = j if j < len(modified_content) else len(modified_content)
+            for k in range(section_start, end_line):
+                if not modified_content[k].strip().startswith(';'):
+                    modified_content[k] = '; SKIPPED SUPPORT: ' + modified_content[k]
+            
+            support_sections_commented += 1
+            i = j  # Continue from after the support section
+        else:
+            i += 1
+    
+    return modified_content, support_sections_commented
+
 def find_target_layer_line_by_z_height(layer_changes, target_z):
     """Find the layer change line where the target Z height is reached or exceeded."""
     for layer_info in layer_changes:
@@ -637,7 +708,7 @@ def find_target_layer_line_by_z_height(layer_changes, target_z):
             return layer_info['lineNumber'] - 1, layer_info['zHeight']  # Convert to 0-based index
     return None, None
 
-def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exec_blocks_count, original_filename):
+def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exec_blocks_count, original_filename, skip_support=False, support_sections_commented=0):
     """Add a header comment with resume information."""
     header_lines = [
         "; ================================\n",
@@ -650,20 +721,40 @@ def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exe
         f"; G28 homing commands removed (before target): {g28_count}\n",
         f"; ALL Z-moves removed (before target): {z_moves_count}\n",
         f"; Executable blocks processed (before target): {exec_blocks_count}\n",
+    ]
+    
+    if skip_support:
+        header_lines.append(f"; Support sections skipped after target: {support_sections_commented}\n")
+    
+    header_lines.extend([
         "; ================================\n",
         "; IMPORTANT: Ensure hotend and bed are at proper temperatures\n",
         "; IMPORTANT: Manually position nozzle near resume point\n",
         "; IMPORTANT: Ensure filament is loaded and primed\n",
         "; IMPORTANT: ALL Z-moves before target layer have been removed\n",
-        "; IMPORTANT: Content AFTER target layer remains unchanged\n",
+    ])
+    
+    if skip_support:
+        header_lines.append("; IMPORTANT: Support sections after target layer have been skipped\n")
+    else:
+        header_lines.append("; IMPORTANT: Content AFTER target layer remains unchanged\n")
+    
+    header_lines.extend([
         "; ================================\n",
         "\n"
-    ]
+    ])
     
     return header_lines + content
 
-def process_gcode_content(content_str, target_z_height, original_filename='unknown.gcode'):
-    """Process G-code content and return modified content with statistics."""
+def process_gcode_content(content_str, target_z_height, original_filename='unknown.gcode', skip_support=False):
+    """Process G-code content and return modified content with statistics.
+    
+    Args:
+        content_str: G-code content as string
+        target_z_height: Target Z height to resume from
+        original_filename: Original filename
+        skip_support: If True, skip printing support sections after target layer
+    """
     content = content_str.split('\n')
     
     # Find the start point (first "; Filament gcode")
@@ -671,7 +762,7 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
     if filament_start is None:
         filament_start = 0
     
-    # Find all layer changes with Z heights
+    # Find all layer changes with Z heights (always detect all layers, including support)
     layer_changes = find_layer_change_heights('\n'.join(content))
     if not layer_changes:
         # Fallback to old method if no LAYER_CHANGE comments found
@@ -705,9 +796,17 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
     # Comment out the specified range (everything before the target layer)
     modified_content = comment_out_layers(content, filament_start, target_line - 1)
     
+    # If skip_support is enabled, comment out support sections after the target layer
+    support_sections_commented = 0
+    if skip_support:
+        modified_content, support_sections_commented = comment_out_support_sections_after_target(
+            modified_content, target_line
+        )
+    
     # Add informative header
     modified_content = add_resume_header(modified_content, target_z_height, actual_z, 
-                                       g28_count, z_moves_count, exec_blocks_count, original_filename)
+                                       g28_count, z_moves_count, exec_blocks_count, original_filename, 
+                                       skip_support, support_sections_commented)
     
     # Calculate statistics
     commented_lines = target_line - filament_start
@@ -719,7 +818,7 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
     return {
         'content': '\n'.join(modified_content),
         'filename': output_filename,
-        'stats': {
+            'stats': {
             'g28_count': g28_count,
             'z_moves_count': z_moves_count,
             'exec_blocks_count': exec_blocks_count,
@@ -728,7 +827,8 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
             'target_z': target_z_height,
             'original_filename': original_filename,
             'total_lines': len(modified_content),
-            'target_line': target_line
+            'target_line': target_line,
+            'support_sections_skipped': support_sections_commented if skip_support else 0
         }
     }
 
