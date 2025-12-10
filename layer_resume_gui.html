@@ -653,6 +653,11 @@
                 <div class="progress-bar" id="progressBar"></div>
             </div>
             <div id="progressText">Initializing...</div>
+            <div style="margin-top: 15px;">
+                <button type="button" class="button danger" id="cancelProcessBtn">
+                    ❌ Cancel Processing
+                </button>
+            </div>
         </div>
         
         <div class="server-control">
@@ -690,6 +695,7 @@
                 this.layerMethod = 'unknown';
                 this.isUpdating = false;
                 this.serverUrl = window.location.origin;
+                this.abortController = null;
                 this.initializeEventListeners();
             }
 
@@ -708,6 +714,7 @@
                 document.getElementById('createAnotherBtn').addEventListener('click', this.resetInterface.bind(this));
                 document.getElementById('terminateServerBtn').addEventListener('click', this.terminateServer.bind(this));
                 document.getElementById('skipSupport').addEventListener('change', this.handleSkipSupportChange.bind(this));
+                document.getElementById('cancelProcessBtn').addEventListener('click', this.cancelProcessing.bind(this));
             }
 
             async toggleFileBrowser() {
@@ -1084,6 +1091,8 @@
                     return;
                 }
                 
+                // Create new AbortController for this request
+                this.abortController = new AbortController();
                 this.showProgressSection();
                 
                 try {
@@ -1101,7 +1110,8 @@
                     const response = await fetch(`${this.serverUrl}/api/process`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(requestData)
+                        body: JSON.stringify(requestData),
+                        signal: this.abortController.signal
                     });
                     
                     if (!response.ok) {
@@ -1113,7 +1123,8 @@
                     const result = await response.json();
                     
                     if (result.success) {
-                        this.processedFilePath = result.output_file;
+                        // Use filepath if available, otherwise construct from output_file
+                        this.processedFilePath = result.filepath || `/home/biqu/printer_data/gcodes/${result.output_file}`;
                         this.processedContent = result.processed_content;
                         
                         this.updateProgress(100, 'Complete!');
@@ -1134,9 +1145,27 @@
                     }
                     
                 } catch (error) {
-                    console.error('Error processing G-code:', error);
-                    this.showStatus(`❌ Error processing G-code: ${error.message}`, 'error');
-                    this.hideProgressSection();
+                    // Check if error is due to abort
+                    if (error.name === 'AbortError') {
+                        console.log('Processing cancelled by user');
+                        this.showStatus('⚠️ Processing cancelled', 'info');
+                        this.hideProgressSection();
+                    } else {
+                        console.error('Error processing G-code:', error);
+                        this.showStatus(`❌ Error processing G-code: ${error.message}`, 'error');
+                        this.hideProgressSection();
+                    }
+                } finally {
+                    // Clear abort controller
+                    this.abortController = null;
+                }
+            }
+
+            cancelProcessing() {
+                if (this.abortController) {
+                    this.abortController.abort();
+                    this.updateProgress(0, 'Cancelling...');
+                    this.showStatus('⚠️ Cancelling processing...', 'info');
                 }
             }
 

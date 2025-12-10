@@ -404,7 +404,31 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         try:
             # Process the G-code
             result = process_gcode_content(content, target_z, original_filename, skip_support=skip_support)
-            self.send_json_response(result)
+            
+            # Save the processed file
+            output_filename = result['filename']
+            output_directory = '/home/biqu/printer_data/gcodes'
+            output_filepath = os.path.join(output_directory, output_filename)
+            
+            # Ensure directory exists
+            os.makedirs(output_directory, exist_ok=True)
+            
+            # Write the processed content to file
+            with open(output_filepath, 'w', encoding='utf-8') as f:
+                f.write(result['content'])
+            
+            # Set appropriate permissions
+            os.chmod(output_filepath, 0o644)
+            
+            # Format response to match frontend expectations
+            response_data = {
+                'success': True,
+                'output_file': output_filename,
+                'filepath': output_filepath,  # Include full path for queue/download
+                'processed_content': result['content'],
+                'stats': result['stats']
+            }
+            self.send_json_response(response_data)
             
         except Exception as e:
             print(f"Error processing G-code: {e}")
@@ -666,9 +690,9 @@ def comment_out_support_sections_after_target(content, target_line):
     i = target_line
     
     while i < len(modified_content):
-        line = modified_content[i].strip()
+        line = modified_content[i]
         
-        # Check if this line starts a support section
+        # Check if this line starts a support section (check original line, not stripped)
         if support_type_pattern.search(line):
             # Found a support section - comment it out until we find a non-support TYPE
             section_start = i
@@ -676,26 +700,32 @@ def comment_out_support_sections_after_target(content, target_line):
             # Look ahead to find where this support section ends
             # It ends when we find a TYPE: that is NOT support
             j = i + 1
+            found_end = False
             while j < len(modified_content):
-                next_line = modified_content[j].strip()
+                next_line = modified_content[j]
                 
                 # Check if we found a TYPE: comment
                 if type_pattern.search(next_line):
                     # If it's not a support type, this is where the support section ends
                     if not support_type_pattern.search(next_line):
+                        found_end = True
                         break
                     # If it's another support type, continue (might be support interface after support)
                 
                 j += 1
             
-            # Comment out the support section (from section_start to j-1, or end of file)
-            end_line = j if j < len(modified_content) else len(modified_content)
+            # Comment out the support section
+            # If we found the end, comment up to (but not including) the next TYPE
+            # If we reached end of file, comment to the end
+            end_line = j if found_end else len(modified_content)
             for k in range(section_start, end_line):
-                if not modified_content[k].strip().startswith(';'):
+                # Only comment out non-comment lines
+                stripped = modified_content[k].strip()
+                if stripped and not stripped.startswith(';'):
                     modified_content[k] = '; SKIPPED SUPPORT: ' + modified_content[k]
             
             support_sections_commented += 1
-            i = j  # Continue from after the support section
+            i = j  # Continue from after the support section (or end of file)
         else:
             i += 1
     
