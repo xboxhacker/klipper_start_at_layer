@@ -2,7 +2,7 @@
 
 A web-based GUI tool for resuming failed 3D prints at specific layer heights. Designed for Klipper firmware with Mainsail/Fluidd integration.
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.6+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
@@ -14,6 +14,10 @@ A web-based GUI tool for resuming failed 3D prints at specific layer heights. De
 - **Interactive File Browser** - Navigate and select G-code files visually
 - **Layer Preview** - See all available layers before processing
 - **Dropdown Layer Selection** - Choose exact layer from dropdown or enter Z height manually
+- **Support Material Skipping** - Option to skip printing support material and go directly to part shells
+- **Cancel Processing** - Cancel button to stop processing if needed
+- **Clear File** - Easy way to clear current file and start fresh
+- **Auto-Load Most Recent Print** - Automatically loads the most recently modified G-code file on page load
 - **Safe Processing** - Only modifies content BEFORE target layer, preserves everything after
 - **Auto-shutdown** - Server automatically closes 30 seconds after processing
 - **Network Accessible** - Works with headless printer setups
@@ -119,6 +123,8 @@ python3 start_at_layer_web.py --help
 ### Web Interface Guide
 
 #### 1. File Selection
+- **Auto-Load**: Most recent print file is automatically loaded when the page opens
+- **Most Recent Button**: Click "⭐ Most Recent Print" to reload the most recent file
 - Use the file browser to navigate to your G-code files
 - Default directory: `/home/biqu/printer_data/gcodes`
 - Click on directories to navigate, files to select
@@ -127,13 +133,19 @@ python3 start_at_layer_web.py --help
 - **Dropdown Method**: Choose from detected layers in dropdown
 - **Manual Entry**: Enter specific Z height in millimeters
 - **Find Nearest**: Click to find closest layer to entered Z height
+- **Support Skipping**: Checkbox to skip support material when resuming (goes directly to part shells)
 
 #### 3. Processing
 - Click "📋 Preview Layers" to see all available layers
 - Click "🚀 Process G-code" to generate resume file
+- Use "❌ Cancel Processing" button to stop processing if needed
 - Server automatically shuts down 30 seconds after processing
 
-#### 4. Output Options
+#### 4. File Management
+- **✖️ Clear File**: Button to clear current file and reset interface
+- Automatically clears previous file when selecting a new one
+
+#### 5. Output Options
 - **🖨️ Queue for Printing**: Prepare file for printer interface
 - **💾 Download File**: Download processed G-code to your device
 - **🔄 Process Another File**: Reset interface for new file
@@ -181,8 +193,9 @@ G1 Z5.2 F720
 2. **Remove G28 Commands**: Comment out homing before target
 3. **Disable Z-moves**: Comment out ALL Z-moves before target layer
 4. **Skip Early Content**: Comment out content from filament start to target
-5. **Preserve Later Content**: Keep everything after target unchanged
-6. **Add Header**: Include resume instructions and statistics
+5. **Skip Support Material** (optional): If enabled, comments out support and support interface sections after target layer
+6. **Preserve Later Content**: Keep everything after target unchanged (except support if skipped)
+7. **Add Header**: Include resume instructions and statistics
 
 ### Generated Header Example
 
@@ -195,11 +208,13 @@ G1 Z5.2 F720
 ; G28 homing commands removed (before target): 3
 ; ALL Z-moves removed (before target): 15
 ; Executable blocks processed (before target): 2
+; Support sections skipped after target: 5
 ; ================================
 ; IMPORTANT: Ensure hotend and bed are at proper temperatures
 ; IMPORTANT: Manually position nozzle near resume point
 ; IMPORTANT: Ensure filament is loaded and primed
 ; IMPORTANT: ALL Z-moves before target layer have been removed
+; IMPORTANT: Support sections after target layer have been skipped
 ; IMPORTANT: Content AFTER target layer remains unchanged
 ; ================================
 ```
@@ -285,6 +300,11 @@ python3 start_at_layer_web.py --web --port 8082
 - File may not have `LAYER_CHANGE` comments
 - Tool will fallback to detecting Z-moves
 - Ensure G-code file is properly formatted
+
+#### "Target Z height exceeds maximum"
+- The entered Z height is higher than the maximum in the file
+- Use the dropdown to select from available layers
+- Or enter a Z height within the file's range (shown in error message)
 
 #### "Permission denied" 
 ```bash
@@ -428,6 +448,43 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ## 📈 Changelog
+
+### Version 1.2.0 (2025-01-XX)
+
+**New Features**
+- ✅ **Auto-Load Most Recent Print** - Automatically loads the most recently modified G-code file when the page opens
+- ✅ **Most Recent Print Button** - Quick button to reload the most recent print file
+- ✅ **Smart File Detection** - Recursively searches gcodes directory and excludes resume files
+
+**Improvements**
+- 🔧 Better UX for resuming failed prints (99.999% of the time you want the most recent file)
+- 🔧 Faster workflow - no need to browse for the file you just printed
+
+**Author:** xboxhacker  
+**Last Updated:** 2025-01-XX
+
+---
+
+### Version 1.1.0 (2025-01-XX)
+
+**New Features**
+- ✅ **Support Material Skipping** - Option to skip printing support and support interface material when resuming
+- ✅ **Cancel Processing Button** - Ability to cancel processing if wrong file or settings selected
+- ✅ **Clear File Button** - Easy way to clear current file and start fresh
+- ✅ **Automatic State Clearing** - Automatically clears previous file data when selecting a new file
+- ✅ **Improved Error Messages** - Better error messages with helpful suggestions
+- ✅ **File Auto-Save** - Processed files are automatically saved to disk
+
+**Improvements**
+- 🔧 Better handling of file state management
+- 🔧 Improved support layer detection (Orca Slicer, PrusaSlicer, SuperSlicer, Cura)
+- 🔧 Enhanced UI feedback during processing
+- 🔧 Better validation of target Z heights
+
+**Author:** xboxhacker  
+**Last Updated:** 2025-01-XX
+
+---
 
 ### Version 1.0.0 (2025-07-08 14:20:32 UTC)
 

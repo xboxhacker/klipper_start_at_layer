@@ -59,6 +59,8 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
                 self.handle_process_gcode(post_data)
             elif self.path == '/api/terminate':
                 self.handle_terminate_server(post_data)
+            elif self.path == '/api/most-recent-file':
+                self.handle_most_recent_file(post_data)
             else:
                 self.send_404()
                 
@@ -475,6 +477,82 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             print(f"Error in server termination: {e}")
             self.send_error_response(f"Failed to terminate server: {str(e)}")
     
+    def handle_most_recent_file(self, post_data):
+        """Handle requests for the most recently modified G-code file."""
+        try:
+            if post_data:
+                data = json.loads(post_data.decode('utf-8'))
+                directory = data.get('path', '/home/biqu/printer_data/gcodes')
+            else:
+                directory = '/home/biqu/printer_data/gcodes'
+        except json.JSONDecodeError as e:
+            print(f"JSON decode error: {e}")
+            directory = '/home/biqu/printer_data/gcodes'
+        
+        # Sanitize and validate path
+        directory = os.path.abspath(directory)
+        if not directory.startswith('/home/biqu'):
+            directory = '/home/biqu/printer_data/gcodes'
+        
+        try:
+            if not os.path.exists(directory):
+                directory = '/home/biqu/printer_data/gcodes'
+            
+            if not os.path.isdir(directory):
+                raise ValueError(f"Path is not a directory: {directory}")
+            
+            # Find all G-code files recursively
+            gcode_files = []
+            for root, dirs, files in os.walk(directory):
+                # Skip hidden directories
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                
+                for filename in files:
+                    # Skip hidden files and resume files (they're generated, not original prints)
+                    if filename.startswith('.') or '_resume_' in filename:
+                        continue
+                    
+                    if filename.lower().endswith(('.gcode', '.g')):
+                        filepath = os.path.join(root, filename)
+                        try:
+                            stat_info = os.stat(filepath)
+                            gcode_files.append({
+                                'name': filename,
+                                'path': filepath,
+                                'type': 'file',
+                                'size': stat_info.st_size,
+                                'modified': stat_info.st_mtime,  # Keep as timestamp for sorting
+                                'modified_str': datetime.fromtimestamp(stat_info.st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                            })
+                        except (OSError, PermissionError):
+                            continue
+            
+            if not gcode_files:
+                self.send_json_response({
+                    'success': False,
+                    'message': 'No G-code files found'
+                })
+                return
+            
+            # Sort by modification time (most recent first)
+            gcode_files.sort(key=lambda x: x['modified'], reverse=True)
+            most_recent = gcode_files[0]
+            
+            # Convert timestamp back to string for response
+            most_recent['modified'] = most_recent['modified_str']
+            del most_recent['modified_str']
+            
+            self.send_json_response({
+                'success': True,
+                'file': most_recent
+            })
+            
+        except Exception as e:
+            print(f"Error finding most recent file: {e}")
+            import traceback
+            traceback.print_exc()
+            self.send_error_response(f"Failed to find most recent file: {str(e)}")
+    
     def send_json_response(self, data):
         """Send a JSON response."""
         self.send_response(200)
@@ -808,13 +886,19 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
                 break
         else:
             max_z = max(z for _, z, _ in layer_lines)
-            raise ValueError(f"Target Z height {target_z_height}mm not reached. Maximum Z in file: {max_z}mm")
+            raise ValueError(
+                f"Target Z height {target_z_height}mm exceeds the maximum Z height in the file ({max_z}mm). "
+                f"Please enter a Z height between 0.0mm and {max_z}mm."
+            )
     else:
         # Find the target layer using LAYER_CHANGE comments
         target_line, actual_z = find_target_layer_line_by_z_height(layer_changes, target_z_height)
         if target_line is None:
             max_z = max(layer['zHeight'] for layer in layer_changes)
-            raise ValueError(f"Target Z height {target_z_height}mm not reached. Maximum Z in file: {max_z}mm")
+            raise ValueError(
+                f"Target Z height {target_z_height}mm exceeds the maximum Z height in the file ({max_z}mm). "
+                f"Please enter a Z height between 0.0mm and {max_z}mm."
+            )
     
     # ONLY process content BEFORE the target line
     # Remove G28 commands only before target line

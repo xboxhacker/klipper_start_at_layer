@@ -513,6 +513,9 @@
                         <button type="button" class="button secondary" id="browseBtn">
                             📁 Browse Files
                         </button>
+                        <button type="button" class="button warning" id="clearFileBtn" style="display: none;">
+                            ✖️ Clear File
+                        </button>
                     </div>
                 </div>
                 
@@ -521,6 +524,7 @@
                         <button type="button" class="button small secondary" id="homeBtn">🏠 Home</button>
                         <button type="button" class="button small secondary" id="gcodesBtn">📄 G-codes</button>
                         <button type="button" class="button small warning" id="refreshBtn">🔄 Refresh</button>
+                        <button type="button" class="button small success" id="mostRecentBtn">⭐ Most Recent Print</button>
                     </div>
                     
                     <div class="path-nav" id="pathNav">
@@ -704,6 +708,7 @@
                 document.getElementById('homeBtn').addEventListener('click', () => this.loadDirectory('/home/biqu'));
                 document.getElementById('gcodesBtn').addEventListener('click', () => this.loadDirectory('/home/biqu/printer_data/gcodes'));
                 document.getElementById('refreshBtn').addEventListener('click', this.refreshDirectory.bind(this));
+                document.getElementById('mostRecentBtn').addEventListener('click', this.loadMostRecentFile.bind(this));
                 document.getElementById('zLayerDropdown').addEventListener('change', this.handleDropdownChange.bind(this));
                 document.getElementById('targetZ').addEventListener('input', this.handleManualInput.bind(this));
                 document.getElementById('findNearestBtn').addEventListener('click', this.findNearestLayer.bind(this));
@@ -839,8 +844,14 @@
             }
 
             async selectFile(filepath, fileInfo) {
+                // Clear previous file state before loading new one
+                this.clearFileState();
+                
                 this.currentFilePath = filepath;
                 document.getElementById('filePath').value = filepath;
+                
+                // Show clear file button
+                document.getElementById('clearFileBtn').style.display = 'inline-block';
                 
                 // Hide file browser
                 document.getElementById('fileBrowser').style.display = 'none';
@@ -858,6 +869,83 @@
                 }
                 
                 this.showStatus(`✅ Selected file: ${fileInfo.name}`, 'success');
+            }
+
+            clearFileState() {
+                // Clear all file-related state
+                this.currentFilePath = null;
+                this.originalContent = null;
+                this.processedFilePath = null;
+                this.processedContent = null;
+                this.layers = [];
+                this.layerMethod = 'unknown';
+                
+                // Clear UI elements
+                document.getElementById('filePath').value = '';
+                document.getElementById('fileInfo').style.display = 'none';
+                document.getElementById('zHeightSection').style.display = 'none';
+                document.getElementById('layerRangeInfo').style.display = 'none';
+                document.getElementById('previewSection').style.display = 'none';
+                document.getElementById('actionsSection').style.display = 'none';
+                document.getElementById('clearFileBtn').style.display = 'none';
+                
+                // Reset form inputs
+                document.getElementById('zLayerDropdown').innerHTML = '<option value="">Select a layer...</option>';
+                document.getElementById('zLayerDropdown').disabled = true;
+                document.getElementById('targetZ').value = '';
+                
+                // Disable buttons
+                document.getElementById('previewBtn').disabled = true;
+                document.getElementById('processBtn').disabled = true;
+                document.getElementById('findNearestBtn').disabled = true;
+                
+                // Clear status
+                this.hideStatus();
+            }
+
+            clearCurrentFile() {
+                this.clearFileState();
+                this.showStatus('ℹ️ File cleared. Please select a new file.', 'info');
+            }
+
+            async loadMostRecentFile() {
+                try {
+                    this.showStatus('🔍 Finding most recent print file...', 'info');
+                    
+                    const response = await fetch(`${this.serverUrl}/api/most-recent-file`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ path: '/home/biqu/printer_data/gcodes' })
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error(`Failed to find most recent file: ${response.statusText}`);
+                    }
+                    
+                    const result = await response.json();
+                    
+                    if (result.success && result.file) {
+                        // Use the filepath directly from the response
+                        const filepath = result.file.path;
+                        const filename = result.file.name;
+                        
+                        // Select the file
+                        await this.selectFile(filepath, {
+                            name: filename,
+                            size: result.file.size,
+                            modified: result.file.modified,
+                            type: 'file'
+                        });
+                        
+                        this.showStatus(`✅ Loaded most recent file: ${filename}`, 'success');
+                    } else {
+                        this.showStatus('⚠️ No G-code files found', 'info');
+                    }
+                    
+                } catch (error) {
+                    console.error('Error loading most recent file:', error);
+                    this.showStatus(`❌ Error: ${error.message}`, 'error');
+                }
             }
 
             displayFileInfo(fileInfo) {
@@ -1272,27 +1360,8 @@
                 // Reset form
                 document.getElementById('resumeForm').reset();
                 
-                // Reset state
-                this.currentFilePath = null;
-                this.processedFilePath = null;
-                this.processedContent = null;
-                this.originalContent = null;
-                this.layers = [];
-                
-                // Hide sections
-                document.getElementById('zHeightSection').style.display = 'none';
-                document.getElementById('actionsSection').style.display = 'none';
-                document.getElementById('previewSection').style.display = 'none';
-                document.getElementById('fileInfo').style.display = 'none';
-                document.getElementById('layerRangeInfo').style.display = 'none';
-                
-                // Reset buttons
-                document.getElementById('previewBtn').disabled = true;
-                document.getElementById('processBtn').disabled = true;
-                document.getElementById('findNearestBtn').disabled = true;
-                
-                // Clear status
-                this.hideStatus();
+                // Clear file state (this handles all the UI reset)
+                this.clearFileState();
                 
                 this.showStatus('🔄 Interface reset - ready for new file', 'info');
             }
@@ -1360,7 +1429,12 @@
 
         // Initialize the application
         document.addEventListener('DOMContentLoaded', () => {
-            new LayerResumeGUI();
+            const gui = new LayerResumeGUI();
+            // Auto-load most recent file on page load
+            gui.loadMostRecentFile().catch(err => {
+                console.log('Could not auto-load most recent file:', err);
+                // Silently fail - user can still browse manually
+            });
         });
     </script>
 </body>
