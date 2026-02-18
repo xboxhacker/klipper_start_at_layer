@@ -23,14 +23,27 @@ import time
 server_instance = None
 shutdown_timer = None
 
+# Paths: use the home directory of the user running the script (works for pi, biqu, or any Klipper host)
+_HOME_DIR = os.path.expanduser('~')
+_PRINTER_DATA_DIR = os.path.join(_HOME_DIR, 'printer_data')
+_GCODES_DIR = os.path.join(_PRINTER_DATA_DIR, 'gcodes')
+_CONFIG_DIR = os.path.join(_PRINTER_DATA_DIR, 'config')
+_START_AT_LAYER_DIR = os.path.join(_CONFIG_DIR, 'START_AT_LAYER')
+
 class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
     """Custom HTTP handler for the layer resume web interface."""
     
     def do_GET(self):
         """Handle GET requests for serving files."""
         if self.path == '/' or self.path == '/layer_resume_gui.html':
-            html_path = '/home/biqu/printer_data/config/START_AT_LAYER/layer_resume_gui.html'
+            html_path = os.path.join(_START_AT_LAYER_DIR, 'layer_resume_gui.html')
             self.serve_file(html_path)
+        elif self.path == '/api/paths':
+            self.send_json_response({
+                'home': _HOME_DIR,
+                'gcodes': _GCODES_DIR,
+                'printer_data': _PRINTER_DATA_DIR,
+            })
         else:
             self.send_404()
     
@@ -119,30 +132,29 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         try:
             if post_data:
                 data = json.loads(post_data.decode('utf-8'))
-                directory = data.get('path', '/home/biqu/printer_data/gcodes')
+                directory = data.get('path') or _GCODES_DIR
             else:
-                directory = '/home/biqu/printer_data/gcodes'
+                directory = _GCODES_DIR
         except json.JSONDecodeError as e:
             print(f"JSON decode error: {e}")
-            directory = '/home/biqu/printer_data/gcodes'
+            directory = _GCODES_DIR
         
-        # Sanitize and validate path
-        directory = os.path.abspath(directory)
-        
-        if not directory.startswith('/home/biqu'):
-            directory = '/home/biqu/printer_data/gcodes'
+        # Sanitize and validate path (restrict to user's home directory)
+        directory = os.path.abspath(directory) if directory else _GCODES_DIR
+        if not directory.startswith(_HOME_DIR):
+            directory = _GCODES_DIR
         
         files = []
         
         try:
             if not os.path.exists(directory):
-                directory = '/home/biqu/printer_data/gcodes'
+                directory = _GCODES_DIR
             
             if not os.path.isdir(directory):
                 raise ValueError(f"Path is not a directory: {directory}")
             
             # Add parent directory entry if not at root
-            if directory != '/home/biqu' and directory != '/':
+            if directory != _HOME_DIR and directory != '/':
                 files.append({
                     'name': '..',
                     'type': 'directory',
@@ -200,7 +212,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         
         # Sanitize path
         filepath = os.path.abspath(filepath)
-        if not filepath.startswith('/home/biqu'):
+        if not filepath.startswith(_HOME_DIR):
             raise ValueError("Access denied: Invalid file path")
         
         if not os.path.exists(filepath):
@@ -259,14 +271,14 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             data = json.loads(post_data.decode('utf-8'))
             filename = data.get('filename', '')
             content = data.get('content', '')
-            directory = data.get('directory', '/home/biqu/printer_data/gcodes')
+            directory = data.get('directory', _GCODES_DIR)
         except json.JSONDecodeError:
             self.send_error_response("Invalid JSON in request")
             return
         
         # Sanitize inputs
         directory = os.path.abspath(directory)
-        if not directory.startswith('/home/biqu'):
+        if not directory.startswith(_HOME_DIR):
             self.send_error_response("Access denied: Invalid directory path")
             return
         
@@ -326,7 +338,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         
         # Sanitize path
         filepath = os.path.abspath(filepath)
-        if not filepath.startswith('/home/biqu'):
+        if not filepath.startswith(_HOME_DIR):
             raise ValueError("Access denied: Invalid file path")
         
         if not os.path.exists(filepath):
@@ -365,7 +377,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         
         # Sanitize path
         filepath = os.path.abspath(filepath)
-        if not filepath.startswith('/home/biqu'):
+        if not filepath.startswith(_HOME_DIR):
             raise ValueError("Access denied: Invalid file path")
         
         if not os.path.exists(filepath):
@@ -409,7 +421,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             
             # Save the processed file
             output_filename = result['filename']
-            output_directory = '/home/biqu/printer_data/gcodes'
+            output_directory = _GCODES_DIR
             output_filepath = os.path.join(output_directory, output_filename)
             
             # Ensure directory exists
@@ -482,21 +494,21 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         try:
             if post_data:
                 data = json.loads(post_data.decode('utf-8'))
-                directory = data.get('path', '/home/biqu/printer_data/gcodes')
+                directory = data.get('path') or _GCODES_DIR
             else:
-                directory = '/home/biqu/printer_data/gcodes'
+                directory = _GCODES_DIR
         except json.JSONDecodeError as e:
             print(f"JSON decode error: {e}")
-            directory = '/home/biqu/printer_data/gcodes'
+            directory = _GCODES_DIR
         
-        # Sanitize and validate path
+        # Sanitize and validate path (restrict to user's home directory)
         directory = os.path.abspath(directory)
-        if not directory.startswith('/home/biqu'):
-            directory = '/home/biqu/printer_data/gcodes'
+        if not directory.startswith(_HOME_DIR):
+            directory = _GCODES_DIR
         
         try:
             if not os.path.exists(directory):
-                directory = '/home/biqu/printer_data/gcodes'
+                directory = _GCODES_DIR
             
             if not os.path.isdir(directory):
                 raise ValueError(f"Path is not a directory: {directory}")
@@ -1003,9 +1015,9 @@ def start_web_server(port=8081, open_browser_tab_flag=True):
     print(f"📅 Date: 2025-07-08 14:34:48 UTC")
     print(f"👤 User: xboxhacker")
     print(f"🌐 Server: http://0.0.0.0:{available_port}")
-    print(f"📁 G-codes Directory: /home/biqu/printer_data/gcodes")
-    print(f"🏠 Home Directory: /home/biqu")
-    print(f"📄 HTML File: /home/biqu/printer_data/config/START_AT_LAYER/layer_resume_gui.html")
+    print(f"📁 G-codes Directory: {_GCODES_DIR}")
+    print(f"🏠 Home Directory: {_HOME_DIR}")
+    print(f"📄 HTML File: {os.path.join(_START_AT_LAYER_DIR, 'layer_resume_gui.html')}")
     print("⏰ Auto-shutdown: Server will close 30 seconds after processing")
     print("🛑 Manual shutdown: Use 'Terminate Server' button in GUI")
     print("=" * 70)
@@ -1051,7 +1063,7 @@ Usage:
   Custom Port:    python3 start_at_layer_web.py --web --port 8082
 
 Setup Instructions:
-  1. Ensure layer_resume_gui.html is in /home/biqu/printer_data/config/START_AT_LAYER/
+  1. Ensure layer_resume_gui.html is in ~/printer_data/config/START_AT_LAYER/ (or same user as Klipper)
   2. Run: python3 start_at_layer_web.py --web
   3. Browser opens automatically to: http://localhost:8081/layer_resume_gui.html
   4. Also accessible at: http://veho.local:8081/layer_resume_gui.html

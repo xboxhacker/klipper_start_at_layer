@@ -47,10 +47,12 @@ When a 3D print fails, this tool helps you resume from a specific layer by:
 
 ### Setup Instructions
 
-1. **Create directory structure:** (Change this DIR for your device)
+Paths use the **home directory of the user running the script** (e.g. `/home/pi` on Raspberry Pi, `/home/biqu` on BTT, or your Klipper host username). The tool uses `~/printer_data` under that home directory.
+
+1. **Create directory structure:** Run as the same user that runs Klipper (e.g. `pi`, `biqu`, or your host user).
 ```bash
-mkdir -p /home/biqu/printer_data/config/START_AT_LAYER
-cd /home/biqu/printer_data/config/START_AT_LAYER
+mkdir -p ~/printer_data/config/START_AT_LAYER
+cd ~/printer_data/config/START_AT_LAYER
 ```
 
 2. **Download the files:**
@@ -65,7 +67,7 @@ wget https://raw.githubusercontent.com/username/repo/main/layer_resume_gui.html
 
 3. **Verify file structure:**
 ```
-/home/biqu/printer_data/config/START_AT_LAYER/
+~/printer_data/config/START_AT_LAYER/
 ├── start_at_layer_web.py
 └── layer_resume_gui.html
 ```
@@ -87,9 +89,9 @@ python3 start_at_layer_web.py --web
 
 ### Quick Start
 
-1. **Start the web server:**
+1. **Start the web server:** (from your START_AT_LAYER directory, or use the full path)
 ```bash
-cd /home/biqu/printer_data/config/START_AT_LAYER
+cd ~/printer_data/config/START_AT_LAYER
 python3 start_at_layer_web.py --web
 ```
 
@@ -126,7 +128,7 @@ python3 start_at_layer_web.py --help
 - **Auto-Load**: Most recent print file is automatically loaded when the page opens
 - **Most Recent Button**: Click "⭐ Most Recent Print" to reload the most recent file
 - Use the file browser to navigate to your G-code files
-- Default directory: `/home/biqu/printer_data/gcodes`
+- Default directory: `~/printer_data/gcodes` (detected automatically from the host)
 - Click on directories to navigate, files to select
 
 #### 2. Layer Selection
@@ -154,10 +156,10 @@ python3 start_at_layer_web.py --help
 
 ### Directory Paths
 
-The tool restricts access to safe directories:
-- **G-codes**: `/home/biqu/printer_data/gcodes`
-- **Home**: `/home/biqu`
-- **Subdirectories**: Any subdirectory within `/home/biqu`
+The tool uses the **home directory of the user running the script** (same as Klipper). Paths are resolved at runtime—no editing for different hosts.
+- **G-codes**: `~/printer_data/gcodes`
+- **Home**: `~` (your Klipper user’s home, e.g. `/home/pi`, `/home/biqu`)
+- **Access**: Restricted to that home directory tree for security
 
 ### Port Configuration
 
@@ -231,7 +233,7 @@ Add this to your `printer.cfg`:
 ###############################################################
 
 [gcode_shell_command start_layer_resume]
-command: python3 /home/biqu/printer_data/config/START_AT_LAYER/start_at_layer_web.py --web --no-browser
+command: python3 ~/printer_data/config/START_AT_LAYER/start_at_layer_web.py --web --no-browser
 timeout: 1000.0  #Server timeout to kill the server
 verbose: True
 
@@ -256,7 +258,7 @@ gcode:
 
 ### File Access Restrictions
 
-- **Path Validation**: Only allows access to `/home/biqu` directory tree
+- **Path Validation**: Only allows access to the home directory of the user running the script
 - **Extension Filtering**: Only processes `.gcode` and `.g` files
 - **Path Sanitization**: Prevents directory traversal attacks
 
@@ -283,8 +285,8 @@ Before starting a resumed print:
 
 #### "File not found" error
 ```bash
-# Check file path
-ls -la /home/biqu/printer_data/config/START_AT_LAYER/
+# Check file path (use your actual path, e.g. /home/pi or /home/biqu)
+ls -la ~/printer_data/config/START_AT_LAYER/
 # Ensure files exist and have correct permissions
 chmod +x start_at_layer_web.py
 ```
@@ -335,18 +337,20 @@ Check these locations for additional logs:
 ## 📁 File Structure
 
 ```
-/home/biqu/printer_data/config/START_AT_LAYER/
+~/printer_data/config/START_AT_LAYER/
 ├── start_at_layer_web.py          # Main Python web server
 ├── layer_resume_gui.html          # Web interface HTML
 └── README.md                      # This documentation
 
-/home/biqu/printer_data/gcodes/    # G-code files location
+~/printer_data/gcodes/             # G-code files (path depends on host user)
 ├── original_print.gcode           # Your original files
 └── original_print_resume_Z5.2mm.gcode  # Generated resume files
 
 /tmp/
 └── layer_resume_queue.txt         # Queue notification file
 ```
+
+`~` is the home directory of the user running the script (e.g. `/home/pi`, `/home/biqu`).
 
 ## 🚀 Advanced Usage
 
@@ -372,15 +376,15 @@ curl -X POST http://localhost:8081/api/process \
 kill $SERVER_PID
 ```
 
-### Custom Directory Configuration
+### How Paths Work
 
-Modify the script to use different directories by editing these variables:
+The script uses `os.path.expanduser('~')` so it runs correctly on any Klipper host. Run it as the **same user that runs Klipper** (e.g. `pi`, `biqu`). Paths are:
 
-```python
-# In start_at_layer_web.py
-DEFAULT_GCODES_DIR = '/home/biqu/printer_data/gcodes'
-HTML_PATH = '/home/biqu/printer_data/config/START_AT_LAYER/layer_resume_gui.html'
-```
+- **Home**: `~` (e.g. `/home/pi`, `/home/biqu`)
+- **G-codes**: `~/printer_data/gcodes`
+- **Config**: `~/printer_data/config/START_AT_LAYER/`
+
+No path editing is needed when moving between hosts.
 
 ## 🤝 Contributing
 

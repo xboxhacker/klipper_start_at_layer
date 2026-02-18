@@ -506,7 +506,7 @@
                 <div class="form-row">
                     <div class="form-col">
                         <label for="filePath">G-code File Path:</label>
-                        <input type="text" id="filePath" placeholder="/home/biqu/printer_data/gcodes/my_print.gcode" readonly>
+                        <input type="text" id="filePath" placeholder="Select a file or click Browse" readonly>
                     </div>
                     <div class="form-col-auto">
                         <label>&nbsp;</label>
@@ -529,7 +529,7 @@
                     
                     <div class="path-nav" id="pathNav">
                         <span>📁</span>
-                        <span id="currentPath">/home/biqu/printer_data/gcodes</span>
+                        <span id="currentPath">—</span>
                     </div>
                     
                     <div class="file-list" id="fileList">
@@ -691,7 +691,9 @@
         class LayerResumeGUI {
             constructor() {
                 this.currentFilePath = null;
-                this.currentDirectory = '/home/biqu/printer_data/gcodes';
+                this.currentDirectory = '';
+                this.homePath = '';
+                this.gcodesPath = '';
                 this.processedFilePath = null;
                 this.processedContent = null;
                 this.originalContent = null;
@@ -703,10 +705,29 @@
                 this.initializeEventListeners();
             }
 
+            async initPaths() {
+                try {
+                    const response = await fetch(`${this.serverUrl}/api/paths`);
+                    if (response.ok) {
+                        const paths = await response.json();
+                        this.homePath = paths.home || '';
+                        this.gcodesPath = paths.gcodes || '';
+                        this.currentDirectory = this.gcodesPath;
+                        document.getElementById('currentPath').textContent = this.gcodesPath;
+                        document.getElementById('filePath').placeholder = this.gcodesPath + '/my_print.gcode';
+                    }
+                } catch (e) {
+                    console.warn('Could not fetch paths, using defaults:', e);
+                }
+                if (!this.gcodesPath) {
+                    document.getElementById('currentPath').textContent = 'Click Browse or G-codes to load';
+                }
+            }
+
             initializeEventListeners() {
                 document.getElementById('browseBtn').addEventListener('click', this.toggleFileBrowser.bind(this));
-                document.getElementById('homeBtn').addEventListener('click', () => this.loadDirectory('/home/biqu'));
-                document.getElementById('gcodesBtn').addEventListener('click', () => this.loadDirectory('/home/biqu/printer_data/gcodes'));
+                document.getElementById('homeBtn').addEventListener('click', () => this.loadDirectory(this.homePath || '/'));
+                document.getElementById('gcodesBtn').addEventListener('click', () => this.loadDirectory(this.gcodesPath || this.currentDirectory));
                 document.getElementById('refreshBtn').addEventListener('click', this.refreshDirectory.bind(this));
                 document.getElementById('mostRecentBtn').addEventListener('click', this.loadMostRecentFile.bind(this));
                 document.getElementById('zLayerDropdown').addEventListener('change', this.handleDropdownChange.bind(this));
@@ -726,7 +747,8 @@
                 const browser = document.getElementById('fileBrowser');
                 if (browser.style.display === 'none' || browser.style.display === '') {
                     browser.style.display = 'block';
-                    await this.loadDirectory(this.currentDirectory);
+                    const dir = this.currentDirectory || this.gcodesPath || '';
+                    await this.loadDirectory(dir);
                 } else {
                     browser.style.display = 'none';
                 }
@@ -915,7 +937,7 @@
                     const response = await fetch(`${this.serverUrl}/api/most-recent-file`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ path: '/home/biqu/printer_data/gcodes' })
+                        body: JSON.stringify({ path: this.gcodesPath || this.currentDirectory })
                     });
                     
                     if (!response.ok) {
@@ -1212,7 +1234,7 @@
                     
                     if (result.success) {
                         // Use filepath if available, otherwise construct from output_file
-                        this.processedFilePath = result.filepath || `/home/biqu/printer_data/gcodes/${result.output_file}`;
+                        this.processedFilePath = result.filepath || (this.gcodesPath ? `${this.gcodesPath}/${result.output_file}` : result.output_file);
                         this.processedContent = result.processed_content;
                         
                         this.updateProgress(100, 'Complete!');
@@ -1428,8 +1450,9 @@
         }
 
         // Initialize the application
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             const gui = new LayerResumeGUI();
+            await gui.initPaths();
             // Auto-load most recent file on page load
             gui.loadMostRecentFile().catch(err => {
                 console.log('Could not auto-load most recent file:', err);
