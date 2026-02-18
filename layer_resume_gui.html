@@ -575,7 +575,7 @@
                 <div class="checkbox-group">
                     <label for="skipSupport">
                         <input type="checkbox" id="skipSupport" checked>
-                        <span>Skip printing support material (Support & Support interface) - go directly to printing the part shells</span>
+                        <span>Skip first support block only - skip supports on the resume layer, then print supports normally on subsequent layers</span>
                     </label>
                 </div>
                 
@@ -1085,7 +1085,7 @@
                 // Just show a status message
                 const skipSupport = document.getElementById('skipSupport').checked;
                 if (skipSupport) {
-                    this.showStatus('ℹ️ Support material will be skipped when processing G-code', 'info');
+                    this.showStatus('ℹ️ First support block will be skipped, rest print normally', 'info');
                 } else {
                     this.showStatus('ℹ️ Support material will be included when processing G-code', 'info');
                 }

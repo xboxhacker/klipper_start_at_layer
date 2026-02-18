@@ -2,7 +2,7 @@
 
 A web-based GUI tool for resuming failed 3D prints at specific layer heights. Designed for Klipper firmware with Mainsail/Fluidd integration.
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.6+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
@@ -14,7 +14,7 @@ A web-based GUI tool for resuming failed 3D prints at specific layer heights. De
 - **Interactive File Browser** - Navigate and select G-code files visually
 - **Layer Preview** - See all available layers before processing
 - **Dropdown Layer Selection** - Choose exact layer from dropdown or enter Z height manually
-- **Support Material Skipping** - Option to skip printing support material and go directly to part shells
+- **Support Material Skipping** - Option to skip only the first support block after resume (subsequent layers print supports normally)
 - **Cancel Processing** - Cancel button to stop processing if needed
 - **Clear File** - Easy way to clear current file and start fresh
 - **Auto-Load Most Recent Print** - Automatically loads the most recently modified G-code file on page load
@@ -133,7 +133,7 @@ python3 start_at_layer_web.py --help
 - **Dropdown Method**: Choose from detected layers in dropdown
 - **Manual Entry**: Enter specific Z height in millimeters
 - **Find Nearest**: Click to find closest layer to entered Z height
-- **Support Skipping**: Checkbox to skip support material when resuming (goes directly to part shells)
+- **Support Skipping**: Checkbox to skip only the first support block on the resume layer (rest print normally)
 
 #### 3. Processing
 - Click "📋 Preview Layers" to see all available layers
@@ -193,8 +193,8 @@ G1 Z5.2 F720
 2. **Remove G28 Commands**: Comment out homing before target
 3. **Disable Z-moves**: Comment out ALL Z-moves before target layer
 4. **Skip Early Content**: Comment out content from filament start to target
-5. **Skip Support Material** (optional): If enabled, comments out support and support interface sections after target layer
-6. **Preserve Later Content**: Keep everything after target unchanged (except support if skipped)
+5. **Skip First Support Block** (optional): If enabled, comments out only the first support section after target layer; subsequent layers print supports normally
+6. **Preserve Later Content**: Keep everything after target unchanged (except first support block if skipped)
 7. **Add Header**: Include resume instructions and statistics
 
 ### Generated Header Example
@@ -208,13 +208,13 @@ G1 Z5.2 F720
 ; G28 homing commands removed (before target): 3
 ; ALL Z-moves removed (before target): 15
 ; Executable blocks processed (before target): 2
-; Support sections skipped after target: 5
+; First support section skipped after target: 1
 ; ================================
 ; IMPORTANT: Ensure hotend and bed are at proper temperatures
 ; IMPORTANT: Manually position nozzle near resume point
 ; IMPORTANT: Ensure filament is loaded and primed
 ; IMPORTANT: ALL Z-moves before target layer have been removed
-; IMPORTANT: Support sections after target layer have been skipped
+; IMPORTANT: First support block after target layer skipped, rest print normally
 ; IMPORTANT: Content AFTER target layer remains unchanged
 ; ================================
 ```
@@ -449,6 +449,25 @@ SOFTWARE.
 
 ## 📈 Changelog
 
+### Version 1.3.0 (2025-01-XX)
+
+**Code Review & Fixes**
+- 🔧 **Output filename fix** - Use basename for output file when original path is full path
+- 🔧 **Support skip logic** - Verified first-support-only skip works correctly for resume flow
+
+**Verification**
+- ✅ Target layer detection (LAYER_CHANGE + fallback Z-moves)
+- ✅ G28 removal before target only
+- ✅ Z-move commenting before target only  
+- ✅ Content before target commented (filament_start to target_line-1)
+- ✅ Target layer and all content after preserved (except first support block if skipped)
+- ✅ First support section skip only, subsequent layers print supports normally
+
+**Author:** xboxhacker  
+**Last Updated:** 2025-01-XX
+
+---
+
 ### Version 1.2.0 (2025-01-XX)
 
 **New Features**
@@ -468,7 +487,7 @@ SOFTWARE.
 ### Version 1.1.0 (2025-01-XX)
 
 **New Features**
-- ✅ **Support Material Skipping** - Option to skip printing support and support interface material when resuming
+- ✅ **Support Material Skipping** - Option to skip only the first support block after resume (subsequent layers print normally)
 - ✅ **Cancel Processing Button** - Ability to cancel processing if wrong file or settings selected
 - ✅ **Clear File Button** - Easy way to clear current file and start fresh
 - ✅ **Automatic State Clearing** - Automatically clears previous file data when selecting a new file

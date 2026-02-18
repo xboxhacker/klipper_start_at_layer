@@ -741,7 +741,13 @@ def comment_out_layers(content, start_line, end_line):
     return modified_content
 
 def comment_out_support_sections_after_target(content, target_line):
-    """Comment out support and support interface sections after the target layer.
+    """Comment out ONLY THE FIRST support section after the target layer.
+    
+    Skips the first support block (Support + Support interface) right after the
+    target layer, then prints supports normally for all subsequent layers.
+    
+    Layer order: Layer Change -> Supports -> Inner Wall -> Outer Wall -> Infill -> (repeat)
+    We skip only the first "Supports" block after resume.
     
     Args:
         content: List of G-code lines
@@ -770,40 +776,35 @@ def comment_out_support_sections_after_target(content, target_line):
     while i < len(modified_content):
         line = modified_content[i]
         
-        # Check if this line starts a support section (check original line, not stripped)
+        # Check if this line starts a support section
         if support_type_pattern.search(line):
-            # Found a support section - comment it out until we find a non-support TYPE
+            # Found the FIRST support section - comment it out until we find a non-support TYPE
             section_start = i
             
             # Look ahead to find where this support section ends
-            # It ends when we find a TYPE: that is NOT support
+            # It ends when we find a TYPE: that is NOT support (e.g. Inner Wall, Outer Wall)
             j = i + 1
             found_end = False
             while j < len(modified_content):
                 next_line = modified_content[j]
                 
-                # Check if we found a TYPE: comment
                 if type_pattern.search(next_line):
-                    # If it's not a support type, this is where the support section ends
                     if not support_type_pattern.search(next_line):
                         found_end = True
                         break
-                    # If it's another support type, continue (might be support interface after support)
                 
                 j += 1
             
-            # Comment out the support section
-            # If we found the end, comment up to (but not including) the next TYPE
-            # If we reached end of file, comment to the end
+            # Comment out this first support section only
             end_line = j if found_end else len(modified_content)
             for k in range(section_start, end_line):
-                # Only comment out non-comment lines
                 stripped = modified_content[k].strip()
                 if stripped and not stripped.startswith(';'):
                     modified_content[k] = '; SKIPPED SUPPORT: ' + modified_content[k]
             
             support_sections_commented += 1
-            i = j  # Continue from after the support section (or end of file)
+            # STOP HERE - we only skip the first support section, then print supports normally
+            break
         else:
             i += 1
     
@@ -832,7 +833,7 @@ def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exe
     ]
     
     if skip_support:
-        header_lines.append(f"; Support sections skipped after target: {support_sections_commented}\n")
+        header_lines.append(f"; First support section skipped after target: {support_sections_commented}\n")
     
     header_lines.extend([
         "; ================================\n",
@@ -843,7 +844,7 @@ def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exe
     ])
     
     if skip_support:
-        header_lines.append("; IMPORTANT: Support sections after target layer have been skipped\n")
+        header_lines.append("; IMPORTANT: First support block after target layer skipped, rest print normally\n")
     else:
         header_lines.append("; IMPORTANT: Content AFTER target layer remains unchanged\n")
     
@@ -925,8 +926,8 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
     # Calculate statistics
     commented_lines = target_line - filament_start
     
-    # Generate output filename
-    base_name = os.path.splitext(original_filename)[0]
+    # Generate output filename (use basename in case original_filename is a full path)
+    base_name = os.path.splitext(os.path.basename(original_filename))[0]
     output_filename = f"{base_name}_resume_Z{target_z_height}mm.gcode"
     
     return {
