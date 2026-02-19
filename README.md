@@ -2,7 +2,7 @@
 
 A web-based GUI tool for resuming failed 3D prints at specific layer heights. Designed for Klipper firmware with Mainsail/Fluidd integration.
 
-![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.6+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
@@ -192,12 +192,16 @@ G1 Z5.2 F720
 ### Processing Algorithm
 
 1. **Find Target Layer**: Locate layer at or above target Z height
-2. **Remove G28 Commands**: Comment out homing before target
-3. **Disable Z-moves**: Comment out ALL Z-moves before target layer
-4. **Skip Early Content**: Comment out content from filament start to target
-5. **Skip First Support Block** (optional): If enabled, comments out only the first support section after target layer; subsequent layers print supports normally
-6. **Preserve Later Content**: Keep everything after target unchanged (except first support block if skipped)
-7. **Add Header**: Include resume instructions and statistics
+2. **Resume Preamble**: Prepend (after custom header) a short block so retraction and flow work correctly:
+   - **Extrusion mode**: M82 or M83, copied from the original start gcode (so absolute vs relative E is correct)
+   - **SET_PRESSURE_ADVANCE**: First occurrence from the original file (Klipper pressure advance)
+   - **G11**: Unretract so firmware retraction is in a known state before first move
+3. **Remove G28 Commands**: Comment out homing before target
+4. **Disable Z-moves**: Comment out ALL Z-moves before target layer
+5. **Skip Early Content**: Comment out content from filament start to target
+6. **Skip First Support Block** (optional): If enabled, comments out only the first support section after target layer; subsequent layers print supports normally
+7. **Preserve Later Content**: Keep everything after target unchanged (except first support block if skipped)
+8. **Add Header**: Include resume instructions and statistics
 
 ### Generated Header Example
 
@@ -452,6 +456,20 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ## 📈 Changelog
+
+### Version 1.4.0 (2025-02-18)
+
+**Resume retraction & flow (firmware retraction)**
+- ✅ **Resume preamble** - Injects a short block at the start of the modified file (after custom header): extrusion mode (M82/M83) from original, first SET_PRESSURE_ADVANCE from original, and G11 (unretract) so Klipper has correct pressure advance and a known unretracted state before the first move
+- ✅ **Extrusion mode detection** - Uses the same M82 or M83 as the original start gcode so absolute vs relative extrusion matches the file (avoids over-extrusion when file is absolute)
+
+**Improvements**
+- 🔧 Fixes bad retraction and flow when resuming with firmware retraction (G10/G11) by re-establishing PA and unretract state
+
+**Author:** xboxhacker  
+**Last Updated:** 2025-02-18
+
+---
 
 ### Version 1.3.0 (2025-01-XX)
 

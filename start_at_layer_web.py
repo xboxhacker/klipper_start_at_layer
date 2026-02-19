@@ -29,6 +29,7 @@ _PRINTER_DATA_DIR = os.path.join(_HOME_DIR, 'printer_data')
 _GCODES_DIR = os.path.join(_PRINTER_DATA_DIR, 'gcodes')
 _CONFIG_DIR = os.path.join(_PRINTER_DATA_DIR, 'config')
 _START_AT_LAYER_DIR = os.path.join(_CONFIG_DIR, 'START_AT_LAYER')
+_CUSTOM_HEADER_FILE = os.path.join(_START_AT_LAYER_DIR, 'custom_header_gcode.txt')
 
 class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
     """Custom HTTP handler for the layer resume web interface."""
@@ -44,6 +45,8 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
                 'gcodes': _GCODES_DIR,
                 'printer_data': _PRINTER_DATA_DIR,
             })
+        elif self.path == '/api/custom-header':
+            self.handle_get_custom_header()
         else:
             self.send_404()
     
@@ -74,6 +77,8 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
                 self.handle_terminate_server(post_data)
             elif self.path == '/api/most-recent-file':
                 self.handle_most_recent_file(post_data)
+            elif self.path == '/api/custom-header-save':
+                self.handle_save_custom_header(post_data)
             else:
                 self.send_404()
                 
@@ -409,6 +414,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             target_z = float(data.get('target_z', 0))
             original_filename = data.get('original_filename', 'unknown.gcode')
             skip_support = data.get('skip_support', False)
+            custom_header = data.get('custom_header', '').strip()
             
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             print(f"Error parsing request: {e}")
@@ -417,7 +423,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         
         try:
             # Process the G-code
-            result = process_gcode_content(content, target_z, original_filename, skip_support=skip_support)
+            result = process_gcode_content(content, target_z, original_filename, skip_support=skip_support, custom_header=custom_header)
             
             # Save the processed file
             output_filename = result['filename']
@@ -565,6 +571,37 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             traceback.print_exc()
             self.send_error_response(f"Failed to find most recent file: {str(e)}")
     
+    def handle_get_custom_header(self):
+        """Serve custom header G-code from config file. Creates empty file if missing."""
+        try:
+            if os.path.isfile(_CUSTOM_HEADER_FILE):
+                with open(_CUSTOM_HEADER_FILE, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            else:
+                content = ''
+            self.send_json_response({'content': content})
+        except Exception as e:
+            print(f"Error reading custom header: {e}")
+            self.send_json_response({'content': ''})
+
+    def handle_save_custom_header(self, post_data):
+        """Save custom header G-code to config file."""
+        try:
+            data = json.loads(post_data.decode('utf-8'))
+            content = data.get('content', '')
+        except json.JSONDecodeError:
+            self.send_error_response("Invalid JSON")
+            return
+        try:
+            os.makedirs(_START_AT_LAYER_DIR, exist_ok=True)
+            with open(_CUSTOM_HEADER_FILE, 'w', encoding='utf-8') as f:
+                f.write(content)
+            os.chmod(_CUSTOM_HEADER_FILE, 0o644)
+            self.send_json_response({'success': True, 'message': 'Custom header saved'})
+        except Exception as e:
+            print(f"Error saving custom header: {e}")
+            self.send_error_response(f"Failed to save: {str(e)}")
+
     def send_json_response(self, data):
         """Send a JSON response."""
         self.send_response(200)
@@ -822,6 +859,36 @@ def comment_out_support_sections_after_target(content, target_line):
     
     return modified_content, support_sections_commented
 
+def extract_resume_preamble(content_lines, target_line):
+    """Extract lines that must run at resume for retraction/flow: extrusion mode (M82/M83),
+    first SET_PRESSURE_ADVANCE, and G11 (unretract). Scans original content before target_line only.
+    Returns a string (possibly empty) to prepend before printing.
+    """
+    preamble = []
+    # Use same extrusion mode as original start gcode so E values are interpreted correctly
+    m82_m83_pattern = re.compile(r'^\s*(M82|M83)\b', re.IGNORECASE)
+    for i in range(min(target_line, len(content_lines))):
+        line = content_lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith(';'):
+            continue
+        m = m82_m83_pattern.search(stripped)
+        if m:
+            preamble.append(f"{m.group(1).upper()} ; extrusion mode from original (resume)")
+            break
+    set_pa_pattern = re.compile(r'^\s*SET_PRESSURE_ADVANCE\b', re.IGNORECASE)
+    for i in range(min(target_line, len(content_lines))):
+        line = content_lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith(';'):
+            continue
+        if set_pa_pattern.search(stripped):
+            preamble.append(stripped)
+            break
+    # Ensure firmware retraction is in unretracted state before first move
+    preamble.append('G11 ; unretract (resume)')
+    return '\n'.join(preamble) + '\n'
+
 def find_target_layer_line_by_z_height(layer_changes, target_z):
     """Find the layer change line where the target Z height is reached or exceeded."""
     for layer_info in layer_changes:
@@ -867,7 +934,7 @@ def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exe
     
     return header_lines + content
 
-def process_gcode_content(content_str, target_z_height, original_filename='unknown.gcode', skip_support=False):
+def process_gcode_content(content_str, target_z_height, original_filename='unknown.gcode', skip_support=False, custom_header=''):
     """Process G-code content and return modified content with statistics.
     
     Args:
@@ -875,6 +942,7 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
         target_z_height: Target Z height to resume from
         original_filename: Original filename
         skip_support: If True, skip printing support sections after target layer
+        custom_header: Optional G-code string to place at the very top (replaces original header)
     """
     content = content_str.split('\n')
     
@@ -913,6 +981,9 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
                 f"Please enter a Z height between 0.0mm and {max_z}mm."
             )
     
+    # Extract resume preamble (SET_PRESSURE_ADVANCE + G11) from original content before we modify it
+    resume_preamble = extract_resume_preamble(content, target_line)
+    
     # ONLY process content BEFORE the target line
     # Remove G28 commands only before target line
     content, g28_count = remove_g28_commands_before_target(content, target_line)
@@ -942,8 +1013,15 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
     base_name = os.path.splitext(os.path.basename(original_filename))[0]
     output_filename = f"{base_name}_resume_Z{target_z_height}mm.gcode"
     
+    # Build final output: custom header (optional) + resume preamble (pressure advance + G11) + body
+    body_content = '\n'.join(modified_content)
+    if resume_preamble:
+        body_content = resume_preamble + '\n' + body_content
+    if custom_header:
+        body_content = custom_header.rstrip() + '\n\n' + body_content
+    
     return {
-        'content': '\n'.join(modified_content),
+        'content': body_content,
         'filename': output_filename,
             'stats': {
             'g28_count': g28_count,

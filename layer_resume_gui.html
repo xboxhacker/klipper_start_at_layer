@@ -88,6 +88,45 @@
             flex: 1;
         }
         
+        .custom-header-section {
+            background: #2d2d2d;
+            border-radius: 4px;
+            padding: 16px;
+            margin: 15px 0;
+            border: 1px solid #555;
+        }
+        
+        .custom-header-section h3 {
+            margin-top: 0;
+            color: #2196F3;
+        }
+        
+        .custom-header-section textarea {
+            width: 100%;
+            min-height: 120px;
+            padding: 12px;
+            border: 1px solid #555;
+            border-radius: 4px;
+            background-color: #3d3d3d;
+            color: #ffffff;
+            font-family: monospace;
+            font-size: 13px;
+            box-sizing: border-box;
+            resize: vertical;
+        }
+        
+        .custom-header-section textarea:focus {
+            outline: none;
+            border-color: #2196F3;
+        }
+        
+        .custom-header-section .section-actions {
+            margin-top: 10px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
         input[type="text"]:focus, input[type="number"]:focus, select:focus {
             outline: none;
             border-color: #4CAF50;
@@ -543,6 +582,16 @@
                 <div class="file-info" id="fileInfo" style="display: none;"></div>
             </div>
             
+            <div class="custom-header-section" id="customHeaderSection">
+                <h3>📝 Custom header G-code</h3>
+                <p style="margin: 0 0 10px 0; color: #aaa; font-size: 14px;">Inserted at the very top of the output (replaces original file header). Saved to <code>custom_header_gcode.txt</code> in the config folder and auto-loaded when the server starts.</p>
+                <textarea id="customHeaderGcode" placeholder="; Custom startup gcode (e.g. G28, temperature, position)&#10;G28&#10;G1 Z5 F300"></textarea>
+                <div class="section-actions">
+                    <button type="button" class="button small secondary" id="saveCustomHeaderBtn">💾 Save to file</button>
+                    <button type="button" class="button small secondary" id="loadCustomHeaderBtn">📂 Reload from file</button>
+                </div>
+            </div>
+            
             <div class="z-height-section" id="zHeightSection" style="display: none;">
                 <h3>📏 Select Layer to Start From</h3>
                 
@@ -724,6 +773,39 @@
                 }
             }
 
+            async loadCustomHeader() {
+                try {
+                    const response = await fetch(`${this.serverUrl}/api/custom-header`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        document.getElementById('customHeaderGcode').value = data.content || '';
+                        this.showStatus('✅ Custom header loaded from file', 'success');
+                    }
+                } catch (e) {
+                    console.warn('Could not load custom header:', e);
+                    this.showStatus('⚠️ Could not load custom header', 'info');
+                }
+            }
+
+            async saveCustomHeader() {
+                const content = document.getElementById('customHeaderGcode').value;
+                try {
+                    const response = await fetch(`${this.serverUrl}/api/custom-header-save`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ content: content })
+                    });
+                    if (response.ok) {
+                        this.showStatus('✅ Custom header saved to file', 'success');
+                    } else {
+                        const err = await response.json();
+                        this.showStatus('❌ ' + (err.error || 'Save failed'), 'error');
+                    }
+                } catch (e) {
+                    this.showStatus('❌ Failed to save custom header', 'error');
+                }
+            }
+
             initializeEventListeners() {
                 document.getElementById('browseBtn').addEventListener('click', this.toggleFileBrowser.bind(this));
                 document.getElementById('homeBtn').addEventListener('click', () => this.loadDirectory(this.homePath || '/'));
@@ -741,6 +823,8 @@
                 document.getElementById('terminateServerBtn').addEventListener('click', this.terminateServer.bind(this));
                 document.getElementById('skipSupport').addEventListener('change', this.handleSkipSupportChange.bind(this));
                 document.getElementById('cancelProcessBtn').addEventListener('click', this.cancelProcessing.bind(this));
+                document.getElementById('saveCustomHeaderBtn').addEventListener('click', this.saveCustomHeader.bind(this));
+                document.getElementById('loadCustomHeaderBtn').addEventListener('click', this.loadCustomHeader.bind(this));
             }
 
             async toggleFileBrowser() {
@@ -1212,7 +1296,8 @@
                         content: this.originalContent,
                         target_z: targetZ,
                         original_filename: this.currentFilePath,
-                        skip_support: skipSupport
+                        skip_support: skipSupport,
+                        custom_header: document.getElementById('customHeaderGcode').value
                     };
                     
                     this.updateProgress(40, 'Processing G-code...');
@@ -1453,6 +1538,7 @@
         document.addEventListener('DOMContentLoaded', async () => {
             const gui = new LayerResumeGUI();
             await gui.initPaths();
+            await gui.loadCustomHeader();
             // Auto-load most recent file on page load
             gui.loadMostRecentFile().catch(err => {
                 console.log('Could not auto-load most recent file:', err);
