@@ -2,7 +2,7 @@
 
 A web-based GUI tool for resuming failed 3D prints at specific layer heights. Designed for Klipper firmware with Mainsail/Fluidd integration.
 
-![Version](https://img.shields.io/badge/version-1.4.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.7.2-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.6+-green.svg)
 ![License](https://img.shields.io/badge/license-MIT-yellow.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey.svg)
@@ -192,13 +192,15 @@ G1 Z5.2 F720
 ### Processing Algorithm
 
 1. **Find Target Layer**: Locate layer at or above target Z height
-2. **Resume Preamble**: Prepend (after custom header) a short block so retraction and flow work correctly:
-   - **Extrusion mode**: M82 or M83, copied from the original start gcode (so absolute vs relative E is correct)
-   - **SET_PRESSURE_ADVANCE**: First occurrence from the original file (Klipper pressure advance)
-   - **G11**: Unretract so firmware retraction is in a known state before first move
-3. **Remove G28 Commands**: Comment out homing before target
-4. **Disable Z-moves**: Comment out ALL Z-moves before target layer
-5. **Skip Early Content**: Comment out content from filament start to target
+2. **Resume start sequence**: Insert at the **target layer** (not the top of the file):
+   - **SET_KINEMATIC_POSITION Z=**: tell Klipper the bed/nozzle is already at the resume height (no Z motion)
+   - **Extrusion mode**: M82 or M83 from the original start gcode
+   - **SET_PRESSURE_ADVANCE**: first occurrence from the original file
+   - **XY travel only**: move to resume X/Y with no Z on the line
+   - **G11**: unretract
+3. **Remove G28 / PRINT_START**: Comment out homing and start macros before target (these send a moving bed to Z=0)
+4. **Disable Z-moves**: Comment out ALL Z-moves before target layer; strip Z from G0/G1 on the resume layer until the next layer change
+5. **Skip Early Content**: Comment out executable start gcode from `EXECUTABLE_BLOCK_START` through the target layer
 6. **Skip First Support Block** (optional): If enabled, comments out only the first support section after target layer; subsequent layers print supports normally
 7. **Preserve Later Content**: Keep everything after target unchanged (except first support block if skipped)
 8. **Add Header**: Include resume instructions and statistics
@@ -456,6 +458,71 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ## 📈 Changelog
+
+### Version 1.7.2 (2026-08-31)
+
+**XY actually travels after you home X and Y**
+- ✅ **SET_KINEMATIC_POSITION Z only** - Setting kinematic X/Y to the print position made `G1 X Y` a no-move after G28 X/Y (firmware thought it was already there)
+- ✅ **Travel to first live XY** - After skip-support, move to the first remaining print coordinate, not the hop onto skipped support
+
+**Author:** xboxhacker  
+**Last Updated:** 2026-08-31
+
+---
+
+### Version 1.7.1 (2026-08-31)
+
+**Pause while printing a resume file**
+- ✅ **SET_KINEMATIC_POSITION X Y Z** - Marks all axes homed so Mainsail/Klipper `PAUSE` can park. If only Z was set, `PAUSE` often aborted with "Must home axis" and the print kept running
+- ✅ **M400 after resume XY** - Lets pause interrupt after the entry move
+- ⚠️ Your `PAUSE` macro must lift Z with **G91** (relative). After resume the file is in **G90**; `G1 Z10` without G91 sends a moving bed toward Z=10 and looks like it will not stop
+
+**Author:** xboxhacker  
+**Last Updated:** 2026-08-31
+
+---
+
+### Version 1.7.0 (2026-08-31)
+
+**VEHO / moving-bed: do not move Z at resume start**
+- ✅ **No G1 Z at resume** - Bed stays at the physical height you already set
+- ✅ **SET_KINEMATIC_POSITION Z=** - Tells Klipper the resume height without commanding motion
+- ✅ **PRINT_START / mesh / gantry macros commented** - These were still running (before filament start gcode) and homing the bed to Z=0
+- ✅ **Skip from EXECUTABLE_BLOCK_START** - Entire machine start block is skipped, not only from `; filament start gcode`
+- ✅ **Z stripped from resume-layer moves** until the next LAYER_CHANGE; later layers still use normal Z hops
+
+**Author:** xboxhacker  
+**Last Updated:** 2026-08-31
+
+---
+
+### Version 1.6.0 (2026-06-18)
+
+**Deterministic, crash-safe resume entry**
+- ✅ **Controlled start sequence** - At the resume layer the tool now emits an explicit ordered sequence: (1) `G90`, extrusion mode + pressure advance, `G92 E0`; (2) raise Z to 5mm above the resume layer; (3) move XY to the resume position at the safe height; (4) lower Z to the print layer; (5) `G11` unretract
+- ✅ **XY never moves at print height** - The slicer's own lead-in (retract/wipe/lift/travel/prime) is detected and commented as `; RESUME-REPLACED:` so it cannot move XY before Z clearance
+- ✅ **Real travel target** - Picks the first pure-travel XY (move without extrusion) as the resume position, ignoring retract/wipe moves
+
+**Author:** xboxhacker  
+**Last Updated:** 2026-06-18
+
+---
+
+### Version 1.5.0 (2026-06-18)
+
+**Resume safety**
+- ✅ **Z clearance before XY** - Injects `G90` and `G1 Z(target+5mm)` at the resume layer before any XY motion to avoid gantry crashes
+- ✅ **Slicer metadata preserved** - Resume preamble and comment header stay after HEADER/thumbnail blocks so Mainsail can open files
+- ✅ **Version display** - GUI shows `GUI vX.Y.Z · PY vX.Y.Z`; backend exposes `GET /api/version`
+
+**Fixes**
+- 🔧 Output filename keeps original characters (no sanitization)
+- 🔧 Large-file processing: read from disk, stream layer analysis, no full G-code in API response
+
+**Author:** xboxhacker  
+**Last Updated:** 2026-06-18
+
+---
 
 ### Version 1.4.0 (2025-02-18)
 

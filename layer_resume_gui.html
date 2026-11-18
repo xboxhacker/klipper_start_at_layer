@@ -26,6 +26,15 @@
             text-align: center;
             margin-bottom: 30px;
         }
+
+        .app-version {
+            text-align: center;
+            margin-top: -18px;
+            margin-bottom: 22px;
+            color: #9e9e9e;
+            font-size: 13px;
+            font-family: monospace;
+        }
         
         .form-group {
             margin-bottom: 20px;
@@ -539,6 +548,7 @@
 <body>
     <div class="container">
         <h1>🔄 Layer Resume Tool</h1>
+        <div class="app-version" id="appVersion">GUI v1.7.2 · PY v…</div>
         
         <form id="resumeForm">
             <div class="form-group">
@@ -584,7 +594,7 @@
             
             <div class="custom-header-section" id="customHeaderSection">
                 <h3>📝 Custom header G-code</h3>
-                <p style="margin: 0 0 10px 0; color: #aaa; font-size: 14px;">Inserted at the very top of the output (replaces original file header). Saved to <code>custom_header_gcode.txt</code> in the config folder and auto-loaded when the server starts.</p>
+                <p style="margin: 0 0 10px 0; color: #aaa; font-size: 14px;">Inserted at the resume start layer (before first resumed moves). Saved to <code>custom_header_gcode.txt</code> in the config folder and auto-loaded when the server starts.</p>
                 <textarea id="customHeaderGcode" placeholder="; Custom startup gcode (e.g. G28, temperature, position)&#10;G28&#10;G1 Z5 F300"></textarea>
                 <div class="section-actions">
                     <button type="button" class="button small secondary" id="saveCustomHeaderBtn">💾 Save to file</button>
@@ -724,19 +734,21 @@
         <div class="checklist">
             <h3>⚠️ Before Starting Resume Print:</h3>
             <ul>
-                <li>✓ G28 homing commands will be removed</li>
-                <li>✓ Z-moves in executable blocks will be disabled</li>
+                <li>✓ Homing, PRINT_START, and start Z-moves are removed</li>
+                <li>✓ Resume does not command Z — bed stays at current height</li>
                 <li>⚠️ Heat hotend and bed to proper temperatures FIRST</li>
-                <li>⚠️ Manually home axes if needed (G28 X, G28 Y separately)</li>
-                <li>⚠️ Position nozzle near the resume point</li>
+                <li>⚠️ Jog the bed/nozzle to the failed layer height, then SET_KINEMATIC_POSITION if needed</li>
+                <li>⚠️ Do not home Z before starting the resume file</li>
+                <li>⚠️ Home X and Y yourself before starting (G28 X, then G28 Y). Do not home Z</li>
                 <li>⚠️ Ensure filament is loaded and extruder is primed</li>
-                <li>⚠️ Monitor the first few layers carefully</li>
-                <li>⚠️ Z-axis initialization has been bypassed</li>
+                <li>⚠️ Mainsail Pause: PAUSE macro must use G91 for Z hop (not G90 G1 Z10)</li>
             </ul>
         </div>
     </div>
 
     <script>
+        const GUI_VERSION = '1.7.2';
+
         class LayerResumeGUI {
             constructor() {
                 this.currentFilePath = null;
@@ -751,7 +763,29 @@
                 this.isUpdating = false;
                 this.serverUrl = window.location.origin;
                 this.abortController = null;
+                this.guiVersion = GUI_VERSION;
+                this.pyVersion = null;
                 this.initializeEventListeners();
+            }
+
+            async applyVersionInfo() {
+                const versionEl = document.getElementById('appVersion');
+                let pyVersion = '?';
+                try {
+                    const response = await fetch(`${this.serverUrl}/api/version`);
+                    if (response.ok) {
+                        const data = await response.json();
+                        pyVersion = data.version || '?';
+                        this.pyVersion = pyVersion;
+                    }
+                } catch (e) {
+                    console.warn('Could not fetch backend version:', e);
+                }
+                const label = `GUI v${this.guiVersion} · PY v${pyVersion}`;
+                if (versionEl) {
+                    versionEl.textContent = label;
+                }
+                document.title = `Layer Resume Tool · ${label}`;
             }
 
             async initPaths() {
@@ -864,7 +898,7 @@
                 
                 pathParts.forEach((part, index) => {
                     currentPath += '/' + part;
-                    pathHTML += `<span class="path-separator">/</span><span class="path-segment" data-path="${currentPath}">${part}</span>`;
+                    pathHTML += `<span class="path-separator">/</span><span class="path-segment" data-path="${currentPath}">${this.escapeHtml(part)}</span>`;
                 });
                 
                 pathNav.innerHTML = pathHTML;
@@ -908,9 +942,9 @@
                     
                     item.innerHTML = `
                         <div class="file-icon">${icon}</div>
-                        <div class="file-name">${file.name}</div>
+                        <div class="file-name">${this.escapeHtml(file.name)}</div>
                         <div class="file-size">${size}</div>
-                        <div class="file-date">${file.modified}</div>
+                        <div class="file-date">${this.escapeHtml(file.modified)}</div>
                     `;
                     
                     item.addEventListener('click', () => {
@@ -949,6 +983,12 @@
                 return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
             }
 
+            escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
             async selectFile(filepath, fileInfo) {
                 // Clear previous file state before loading new one
                 this.clearFileState();
@@ -967,14 +1007,14 @@
                 
                 // Try to load and analyze the file
                 try {
-                    this.originalContent = await this.loadFileContent(filepath);
-                    await this.analyzeLayers(this.originalContent);
+                    await this.analyzeLayersByPath(filepath);
+                    this.showStatus(`✅ Selected file: ${fileInfo.name}`, 'success');
                 } catch (error) {
                     console.error('Error loading/analyzing file:', error);
                     this.showStatus(`❌ Error analyzing file: ${error.message}`, 'error');
+                    this.currentFilePath = null;
+                    document.getElementById('filePath').value = '';
                 }
-                
-                this.showStatus(`✅ Selected file: ${fileInfo.name}`, 'success');
             }
 
             clearFileState() {
@@ -1081,6 +1121,34 @@
                 return content;
             }
 
+            async analyzeLayersByPath(filepath) {
+                try {
+                    const response = await fetch(`${this.serverUrl}/api/analyze-layers`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ filepath: filepath })
+                    });
+                    
+                    if (!response.ok) {
+                        let message = `Failed to analyze layers: ${response.status} ${response.statusText}`;
+                        try {
+                            const err = await response.json();
+                            if (err.error) message = err.error;
+                        } catch (_) { /* ignore */ }
+                        throw new Error(message);
+                    }
+                    
+                    const data = await response.json();
+                    this.layers = data.layers || [];
+                    this.populateLayerDropdown();
+                    
+                } catch (error) {
+                    console.error('Error in analyzeLayersByPath:', error);
+                    this.showStatus(`❌ Error analyzing layers: ${error.message}`, 'error');
+                    throw error;
+                }
+            }
+
             async analyzeLayers(content) {
                 try {
                     const response = await fetch(`${this.serverUrl}/api/analyze-layers`, {
@@ -1090,9 +1158,12 @@
                     });
                     
                     if (!response.ok) {
-                        const errorText = await response.text();
-                        console.error('Server error response:', errorText);
-                        throw new Error(`Failed to analyze layers: ${response.status} ${response.statusText}`);
+                        let message = `Failed to analyze layers: ${response.status} ${response.statusText}`;
+                        try {
+                            const err = await response.json();
+                            if (err.error) message = err.error;
+                        } catch (_) { /* ignore */ }
+                        throw new Error(message);
                     }
                     
                     const data = await response.json();
@@ -1290,10 +1361,10 @@
                 this.showProgressSection();
                 
                 try {
-                    this.updateProgress(20, 'Loading G-code content...');
+                    this.updateProgress(20, 'Preparing G-code...');
                     
                     const requestData = {
-                        content: this.originalContent,
+                        filepath: this.currentFilePath,
                         target_z: targetZ,
                         original_filename: this.currentFilePath,
                         skip_support: skipSupport,
@@ -1320,7 +1391,6 @@
                     if (result.success) {
                         // Use filepath if available, otherwise construct from output_file
                         this.processedFilePath = result.filepath || (this.gcodesPath ? `${this.gcodesPath}/${result.output_file}` : result.output_file);
-                        this.processedContent = result.processed_content;
                         
                         this.updateProgress(100, 'Complete!');
                         
@@ -1537,6 +1607,7 @@
         // Initialize the application
         document.addEventListener('DOMContentLoaded', async () => {
             const gui = new LayerResumeGUI();
+            await gui.applyVersionInfo();
             await gui.initPaths();
             await gui.loadCustomHeader();
             // Auto-load most recent file on page load

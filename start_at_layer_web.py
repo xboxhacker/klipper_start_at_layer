@@ -12,9 +12,8 @@ from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import threading
 import urllib.parse
-import mimetypes
 import stat
-import subprocess
+import shutil
 import socket
 import webbrowser
 import time
@@ -30,6 +29,59 @@ _GCODES_DIR = os.path.join(_PRINTER_DATA_DIR, 'gcodes')
 _CONFIG_DIR = os.path.join(_PRINTER_DATA_DIR, 'config')
 _START_AT_LAYER_DIR = os.path.join(_CONFIG_DIR, 'START_AT_LAYER')
 _CUSTOM_HEADER_FILE = os.path.join(_START_AT_LAYER_DIR, 'custom_header_gcode.txt')
+APP_VERSION = '1.7.2'
+
+
+# Compiled patterns reused across processing
+_LAYER_CHANGE_RE = re.compile(r';\s*LAYER_CHANGE', re.IGNORECASE)
+_Z_HEIGHT_RE = re.compile(r';\s*Z:\s*(\d+\.?\d*)', re.IGNORECASE)
+_Z_MOVE_RE = re.compile(r'^\s*G[01]\s+.*Z', re.IGNORECASE)
+_G28_RE = re.compile(r'^\s*G28', re.IGNORECASE)
+_START_MACRO_RE = re.compile(
+    r'^\s*(PRINT_START|START_PRINT|BED_MESH_CALIBRATE|QUAD_GANTRY_LEVEL|'
+    r'Z_TILT_ADJUST|G29|HOME_Z|G34)\b',
+    re.IGNORECASE,
+)
+_Z_AXIS_RE = re.compile(r'\s+Z-?(?:\d+\.?\d*|\.\d+)', re.IGNORECASE)
+_LEGACY_Z_RE = re.compile(r'G[01]\s+.*Z(\d+\.?\d*)', re.IGNORECASE)
+_EXEC_BLOCK_START_RE = re.compile(r';\s*EXECUTABLE_BLOCK_START', re.IGNORECASE)
+_EXEC_BLOCK_END_RE = re.compile(r';\s*EXECUTABLE_BLOCK_END', re.IGNORECASE)
+
+
+_SUPPORT_TYPE_RE = re.compile(
+    r';\s*TYPE:\s*(?:Support|SUPPORT|Support\s+interface|SUPPORT\s*[-_]?INTERFACE)',
+    re.IGNORECASE
+)
+_TYPE_COMMENT_RE = re.compile(r';\s*TYPE:', re.IGNORECASE)
+
+
+def read_gcode_file(filepath):
+    """Read and validate a G-code file. Returns file content or raises ValueError."""
+    filepath = os.path.abspath(filepath)
+    if not filepath.startswith(_HOME_DIR):
+        raise ValueError("Access denied: Invalid file path")
+    if not os.path.exists(filepath):
+        raise ValueError(f"File not found: {filepath}")
+    if not filepath.lower().endswith(('.gcode', '.g')):
+        raise ValueError("Invalid file type - only .gcode and .g files are supported")
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        return f.read()
+
+
+def sanitize_gcode_basename(name):
+    """Remove characters that break Mainsail/Moonraker URLs and HTTP download headers."""
+    for ch in '&?#%<>:"|\\':
+        name = name.replace(ch, '_')
+    return name.strip() or 'resume'
+
+
+def content_disposition_attachment(filename):
+    """RFC 5987-safe Content-Disposition for filenames with special characters."""
+    ascii_name = filename.encode('ascii', 'ignore').decode('ascii') or 'resume.gcode'
+    ascii_name = ascii_name.replace('"', '')
+    encoded = urllib.parse.quote(filename)
+    return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded}'
+
 
 class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
     """Custom HTTP handler for the layer resume web interface."""
@@ -45,6 +97,8 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
                 'gcodes': _GCODES_DIR,
                 'printer_data': _PRINTER_DATA_DIR,
             })
+        elif self.path == '/api/version':
+            self.send_json_response({'version': APP_VERSION})
         elif self.path == '/api/custom-header':
             self.handle_get_custom_header()
         else:
@@ -215,20 +269,8 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             raise ValueError("Invalid JSON in request")
         
-        # Sanitize path
-        filepath = os.path.abspath(filepath)
-        if not filepath.startswith(_HOME_DIR):
-            raise ValueError("Access denied: Invalid file path")
-        
-        if not os.path.exists(filepath):
-            raise ValueError(f"File not found: {filepath}")
-        
-        if not filepath.lower().endswith(('.gcode', '.g')):
-            raise ValueError("Invalid file type - only .gcode and .g files are supported")
-        
         try:
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
+            content = read_gcode_file(filepath)
             
             self.send_response(200)
             self.send_header('Content-type', 'text/plain; charset=utf-8')
@@ -243,22 +285,45 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         """Handle layer analysis requests."""
         try:
             data = json.loads(post_data.decode('utf-8'))
-            content = data.get('content', '')
+            filepath = data.get('filepath', '')
+            content = data.get('content') or ''
+            
+            if filepath:
+                filepath = os.path.abspath(filepath)
+                if not filepath.startswith(_HOME_DIR):
+                    self.send_error_response("Access denied: Invalid file path")
+                    return
+                if not os.path.exists(filepath):
+                    self.send_error_response(f"File not found: {filepath}")
+                    return
+                layers = find_layer_change_heights_from_file(filepath)
+                file_size = os.path.getsize(filepath)
+                line_count = None
+            elif not content:
+                self.send_error_response("No file or content provided for layer analysis")
+                return
+            else:
+                layers = find_layer_change_heights(content)
+                file_size = len(content)
+                line_count = content.count('\n') + (1 if content and not content.endswith('\n') else 0)
             
         except json.JSONDecodeError as e:
             print(f"JSON decode error: {e}")
             self.send_error_response("Invalid JSON in request")
             return
+        except ValueError as e:
+            self.send_error_response(str(e))
+            return
         
         try:
-            layers = find_layer_change_heights(content)
-            
+            if line_count is None:
+                line_count = _count_file_lines(filepath)
             response_data = {
                 'layers': layers,
                 'count': len(layers),
                 'debug': {
-                    'content_length': len(content),
-                    'lines_count': len(content.split('\n'))
+                    'content_length': file_size,
+                    'lines_count': line_count
                 }
             }
             
@@ -275,7 +340,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         try:
             data = json.loads(post_data.decode('utf-8'))
             filename = data.get('filename', '')
-            content = data.get('content', '')
+            content = data.get('content') or ''
             directory = data.get('directory', _GCODES_DIR)
         except json.JSONDecodeError:
             self.send_error_response("Invalid JSON in request")
@@ -389,18 +454,21 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             raise ValueError(f"File not found: {filepath}")
         
         try:
-            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read()
-            
             filename = os.path.basename(filepath)
+            file_size = os.path.getsize(filepath)
             
             self.send_response(200)
             self.send_header('Content-type', 'application/octet-stream')
             self.send_header('Access-Control-Allow-Origin', '*')
-            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.send_header('Content-Disposition', content_disposition_attachment(filename))
+            self.send_header('Content-Length', str(file_size))
             self.end_headers()
-            self.wfile.write(content.encode('utf-8'))
             
+            with open(filepath, 'rb') as f:
+                shutil.copyfileobj(f, self.wfile)
+            
+        except BrokenPipeError:
+            print("Client disconnected during file download")
         except Exception as e:
             raise ValueError(f"Failed to download file: {str(e)}")
     
@@ -410,11 +478,27 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             data = json.loads(post_data.decode('utf-8'))
             
             # Extract parameters
-            content = data.get('content', '')
             target_z = float(data.get('target_z', 0))
             original_filename = data.get('original_filename', 'unknown.gcode')
+            filepath = data.get('filepath') or original_filename
             skip_support = data.get('skip_support', False)
-            custom_header = data.get('custom_header', '').strip()
+            custom_header = (data.get('custom_header') or '').strip()
+            content = data.get('content') or ''
+            
+            # Prefer reading from disk (large files, or when frontend did not send content)
+            if filepath and filepath != 'unknown.gcode':
+                try:
+                    content = read_gcode_file(filepath)
+                except ValueError as e:
+                    if not content:
+                        self.send_error_response(f"Failed to read G-code file: {e}")
+                        return
+            
+            if not content:
+                self.send_error_response(
+                    "No G-code content provided. Select a file first or provide a valid filepath."
+                )
+                return
             
         except (json.JSONDecodeError, KeyError, ValueError) as e:
             print(f"Error parsing request: {e}")
@@ -422,30 +506,19 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
             return
         
         try:
-            # Process the G-code
-            result = process_gcode_content(content, target_z, original_filename, skip_support=skip_support, custom_header=custom_header)
+            # Process the G-code and write directly to disk (avoids huge in-memory response).
+            # Let process_gcode_content build the sanitized output path/filename.
+            os.makedirs(_GCODES_DIR, exist_ok=True)
+            result = process_gcode_content(
+                content, target_z, original_filename,
+                skip_support=skip_support,
+                custom_header=custom_header
+            )
             
-            # Save the processed file
-            output_filename = result['filename']
-            output_directory = _GCODES_DIR
-            output_filepath = os.path.join(output_directory, output_filename)
-            
-            # Ensure directory exists
-            os.makedirs(output_directory, exist_ok=True)
-            
-            # Write the processed content to file
-            with open(output_filepath, 'w', encoding='utf-8') as f:
-                f.write(result['content'])
-            
-            # Set appropriate permissions
-            os.chmod(output_filepath, 0o644)
-            
-            # Format response to match frontend expectations
             response_data = {
                 'success': True,
-                'output_file': output_filename,
-                'filepath': output_filepath,  # Include full path for queue/download
-                'processed_content': result['content'],
+                'output_file': result['filename'],
+                'filepath': result['filepath'],
                 'stats': result['stats']
             }
             self.send_json_response(response_data)
@@ -588,7 +661,7 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
         """Save custom header G-code to config file."""
         try:
             data = json.loads(post_data.decode('utf-8'))
-            content = data.get('content', '')
+            content = data.get('content') or ''
         except json.JSONDecodeError:
             self.send_error_response("Invalid JSON")
             return
@@ -604,23 +677,25 @@ class LayerResumeHTTPHandler(BaseHTTPRequestHandler):
 
     def send_json_response(self, data):
         """Send a JSON response."""
-        self.send_response(200)
-        self.send_header('Content-type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        
-        response = json.dumps(data, indent=2)
-        self.wfile.write(response.encode('utf-8'))
+        try:
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps(data).encode('utf-8'))
+        except BrokenPipeError:
+            print("Client disconnected before response could be sent")
     
     def send_error_response(self, error_message):
         """Send an error response."""
-        self.send_response(400)
-        self.send_header('Content-type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        
-        error_response = json.dumps({'error': error_message}, indent=2)
-        self.wfile.write(error_response.encode('utf-8'))
+        try:
+            self.send_response(400)
+            self.send_header('Content-type', 'application/json')
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': error_message}).encode('utf-8'))
+        except BrokenPipeError:
+            print("Client disconnected before error response could be sent")
     
     def log_message(self, format, *args):
         """Override to suppress default HTTP logging."""
@@ -660,6 +735,45 @@ def schedule_server_shutdown():
     print("🛑 Click 'Terminate Server' button for immediate shutdown")
     print("⏰" * 20 + "\n")
 
+def _count_file_lines(filepath):
+    """Count lines in a file without loading it all into memory."""
+    count = 0
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        for count, _ in enumerate(f, 1):
+            pass
+    return count
+
+
+def find_layer_change_heights_from_file(filepath):
+    """Stream a G-code file and find LAYER_CHANGE entries without loading the whole file."""
+    layers = []
+    pending = None
+    i = 0
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            stripped = line.strip()
+            if pending is not None:
+                pn, pcomment, checked = pending
+                checked += 1
+                z_match = _Z_HEIGHT_RE.search(stripped)
+                if z_match:
+                    layers.append({
+                        'lineNumber': pn + 1,
+                        'zHeight': float(z_match.group(1)),
+                        'layerChangeComment': pcomment,
+                        'zComment': stripped
+                    })
+                    pending = None
+                elif checked >= 4:
+                    pending = None
+                else:
+                    pending = (pn, pcomment, checked)
+            elif _LAYER_CHANGE_RE.search(stripped):
+                pending = (i, stripped, 0)
+            i += 1
+    return layers
+
+
 def find_layer_change_heights(content):
     """Find all LAYER_CHANGE comments with Z heights.
     
@@ -670,37 +784,63 @@ def find_layer_change_heights(content):
         List of layer info dictionaries
     """
     layer_lines = []
-    lines = content if isinstance(content, list) else content.split('\n')
-    
-    # Patterns to match LAYER_CHANGE and Z: comments
-    layer_change_pattern = re.compile(r';\s*LAYER_CHANGE', re.IGNORECASE)
-    z_height_pattern = re.compile(r';\s*Z:\s*(\d+\.?\d*)', re.IGNORECASE)
+    lines = content if isinstance(content, list) else content.splitlines()
     
     i = 0
     while i < len(lines):
         line = lines[i].strip()
         
-        # Look for LAYER_CHANGE comment
-        if layer_change_pattern.search(line):
-            # Look for Z: comment in the next few lines
-            for j in range(i + 1, min(i + 5, len(lines))):  # Check next 4 lines
+        if _LAYER_CHANGE_RE.search(line):
+            for j in range(i + 1, min(i + 5, len(lines))):
                 next_line = lines[j].strip()
-                z_match = z_height_pattern.search(next_line)
+                z_match = _Z_HEIGHT_RE.search(next_line)
                 
                 if z_match:
-                    z_height = float(z_match.group(1))
-                    layer_info = {
-                        'lineNumber': i + 1,  # Line number where LAYER_CHANGE starts
-                        'zHeight': z_height,
+                    layer_lines.append({
+                        'lineNumber': i + 1,
+                        'zHeight': float(z_match.group(1)),
                         'layerChangeComment': line,
                         'zComment': next_line
-                    }
-                    layer_lines.append(layer_info)
+                    })
                     break
         
         i += 1
     
     return layer_lines
+
+
+def find_target_layer_line(content, target_z_height):
+    """Single-pass search for the first layer at or above target Z.
+    Returns (0-based index, z) on success, or (None, max_z_or_None) if not found.
+    """
+    max_z = None
+    i = 0
+    while i < len(content):
+        if _LAYER_CHANGE_RE.search(content[i]):
+            for j in range(i + 1, min(i + 5, len(content))):
+                z_match = _Z_HEIGHT_RE.search(content[j])
+                if z_match:
+                    z_height = float(z_match.group(1))
+                    max_z = z_height if max_z is None else max(max_z, z_height)
+                    if z_height >= target_z_height:
+                        return i, z_height
+                    break
+        i += 1
+    return None, max_z
+
+
+def find_target_layer_line_legacy(content, target_z_height):
+    """Fallback: find first Z move at or above target. Returns (index, z) or (None, max_z)."""
+    max_z = 0.0
+    for i, line in enumerate(content):
+        match = _LEGACY_Z_RE.search(line)
+        if match:
+            z_height = float(match.group(1))
+            max_z = max(max_z, z_height)
+            if z_height >= target_z_height:
+                return i, z_height
+    return None, max_z if max_z > 0 else None
+
 
 def find_layer_lines(content):
     """Find all lines that contain layer height information (Z moves) - LEGACY FALLBACK."""
@@ -716,25 +856,63 @@ def find_layer_lines(content):
     return layer_lines
 
 def find_filament_gcode_start(content):
-    """Find the first occurrence of '; Filament gcode'."""
+    """Find the first occurrence of filament start gcode comment (OrcaSlicer/PrusaSlicer)."""
     for i, line in enumerate(content):
-        if '; Filament gcode' in line:
+        lower = line.lower()
+        if '; filament gcode' in lower or '; filament start gcode' in lower:
             return i
     return None
 
-def find_executable_blocks(content):
-    """Find all EXECUTABLE_BLOCK_START and EXECUTABLE_BLOCK_END sections."""
+
+def find_skip_start(content):
+    """First line of machine start gcode to skip (before target layer).
+
+    Prefer EXECUTABLE_BLOCK_START so PRINT_START / homing before '; filament start gcode'
+    cannot still run and send the bed to Z=0.
+    """
+    for i, line in enumerate(content):
+        if _EXEC_BLOCK_START_RE.search(line):
+            return i
+    filament = find_filament_gcode_start(content)
+    return filament if filament is not None else 0
+
+
+def find_metadata_end_line(content):
+    """Line index before executable gcode; keeps slicer HEADER/thumbnail blocks at file start."""
+    for i, line in enumerate(content):
+        if _EXEC_BLOCK_START_RE.search(line):
+            return i
+    for i, line in enumerate(content):
+        if 'HEADER_BLOCK_END' in line:
+            return i + 1
+    return 0
+
+
+def insert_lines_at(content, index, lines):
+    """Insert lines into content at index (each line normalized with newline)."""
+    for offset, line in enumerate(lines):
+        content.insert(index + offset, line if line.endswith('\n') else line + '\n')
+
+
+def split_gcode_lines(text):
+    """Split a G-code snippet into lines for insertion."""
+    if not text or not text.strip():
+        return []
+    return [line if line.endswith('\n') else line + '\n' for line in text.splitlines()]
+
+
+def find_executable_blocks(content, max_line=None):
+    """Find EXECUTABLE_BLOCK_START/END sections up to max_line."""
     blocks = []
-    start_pattern = re.compile(r';\s*EXECUTABLE_BLOCK_START', re.IGNORECASE)
-    end_pattern = re.compile(r';\s*EXECUTABLE_BLOCK_END', re.IGNORECASE)
+    limit = len(content) if max_line is None else min(max_line, len(content))
     
     i = 0
-    while i < len(content):
-        if start_pattern.search(content[i]):
+    while i < limit:
+        if _EXEC_BLOCK_START_RE.search(content[i]):
             start_line = i
             j = i + 1
             while j < len(content):
-                if end_pattern.search(content[j]):
+                if _EXEC_BLOCK_END_RE.search(content[j]):
                     blocks.append((start_line, j))
                     break
                 j += 1
@@ -745,49 +923,95 @@ def find_executable_blocks(content):
     return blocks
 
 def comment_out_all_z_moves_before_target(content, target_line):
-    """Comment out ALL Z moves (including in executable blocks) BEFORE the target line."""
-    modified_content = content[:]
-    z_move_pattern = re.compile(r'^\s*G[01]\s+.*Z', re.IGNORECASE)
+    """Comment out ALL Z moves BEFORE the target line (in place)."""
     z_moves_commented = 0
     
-    # Comment out all Z moves before target line, regardless of context
     for i in range(target_line):
-        line = modified_content[i]
-        if z_move_pattern.match(line.strip()) and not line.strip().startswith(';'):
-            modified_content[i] = '; REMOVED Z-MOVE: ' + line
+        line = content[i]
+        stripped = line.strip()
+        if stripped and not stripped.startswith(';') and _Z_MOVE_RE.match(stripped):
+            content[i] = '; REMOVED Z-MOVE: ' + line
             z_moves_commented += 1
     
-    # Also count executable blocks that were processed (for statistics)
-    executable_blocks = find_executable_blocks(content)
+    executable_blocks = find_executable_blocks(content, target_line)
     processed_blocks = len([block for block in executable_blocks if block[1] < target_line])
     
-    return modified_content, z_moves_commented, processed_blocks
+    return content, z_moves_commented, processed_blocks
 
 def remove_g28_commands_before_target(content, target_line):
-    """Remove or comment out G28 homing commands ONLY BEFORE the target line."""
-    modified_content = []
-    g28_pattern = re.compile(r'^\s*G28', re.IGNORECASE)
+    """Comment out G28 homing commands BEFORE the target line (in place)."""
     g28_count = 0
     
-    for i, line in enumerate(content):
-        if i < target_line and g28_pattern.match(line.strip()):
-            modified_content.append('; REMOVED G28: ' + line)
+    for i in range(target_line):
+        line = content[i]
+        stripped = line.strip()
+        if stripped and not stripped.startswith(';') and _G28_RE.match(stripped):
+            content[i] = '; REMOVED G28: ' + line
             g28_count += 1
-        else:
-            modified_content.append(line)
     
-    return modified_content, g28_count
+    return content, g28_count
+
+def comment_out_start_macros_before_target(content, target_line):
+    """Comment PRINT_START / mesh / gantry macros that would home or drop Z."""
+    count = 0
+    for i in range(target_line):
+        stripped = content[i].strip()
+        if stripped and not stripped.startswith(';') and _START_MACRO_RE.match(stripped):
+            content[i] = '; REMOVED START MACRO: ' + content[i]
+            count += 1
+    return content, count
+
+def strip_z_from_moves(content, start_line, end_line):
+    """Remove Z from G0/G1 in [start_line, end_line) so the bed is not commanded."""
+    stripped_count = 0
+    g_move = re.compile(r'^\s*G[01]\b', re.IGNORECASE)
+    for i in range(start_line, min(end_line, len(content))):
+        line = content[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith(';') or not g_move.match(stripped):
+            continue
+        if _Z_AXIS_RE.search(line):
+            content[i] = _Z_AXIS_RE.sub('', line)
+            stripped_count += 1
+    return stripped_count
+
+def find_next_layer_change(content, after_index):
+    """Index of the next LAYER_CHANGE after after_index, or len(content)."""
+    for i in range(after_index + 1, len(content)):
+        if _LAYER_CHANGE_RE.search(content[i]):
+            return i
+    return len(content)
+
+def filter_custom_header_no_z(custom_header):
+    """Drop G28 and Z moves from custom header so it cannot move the bed."""
+    if not custom_header or not custom_header.strip():
+        return ''
+    kept = []
+    for line in custom_header.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(';'):
+            kept.append(line)
+            continue
+        if _G28_RE.match(stripped) or _START_MACRO_RE.match(stripped):
+            continue
+        if re.match(r'^\s*SET_KINEMATIC_POSITION\b', stripped, re.IGNORECASE):
+            if re.search(r'\b[XY]\s*=', stripped, re.IGNORECASE):
+                continue
+        if re.match(r'^\s*G[01]\b', stripped, re.IGNORECASE) and _Z_AXIS_RE.search(line):
+            line = _Z_AXIS_RE.sub('', line)
+            if not re.search(r'\b[XYE]\s*-?(?:\d+\.?\d*|\.\d+)', line, re.IGNORECASE):
+                continue
+        kept.append(line)
+    return '\n'.join(kept)
 
 def comment_out_layers(content, start_line, end_line):
-    """Comment out lines between start_line and end_line."""
-    modified_content = content[:]
-    
+    """Comment out lines between start_line and end_line (in place)."""
     for i in range(start_line, min(end_line + 1, len(content))):
-        line = modified_content[i]
-        if not line.strip().startswith(';'):
-            modified_content[i] = '; SKIPPED: ' + line
+        line = content[i]
+        if line.strip() and not line.strip().startswith(';'):
+            content[i] = '; SKIPPED: ' + line
     
-    return modified_content
+    return content
 
 def comment_out_support_sections_after_target(content, target_line):
     """Comment out ONLY THE FIRST support section after the target layer.
@@ -805,19 +1029,7 @@ def comment_out_support_sections_after_target(content, target_line):
     Returns:
         Tuple of (modified_content, support_sections_commented)
     """
-    modified_content = content[:]
-    
-    # Patterns to match support layer types (multiple slicer formats)
-    # Orca Slicer: ;TYPE:Support, ;TYPE:Support interface
-    # PrusaSlicer/SuperSlicer: ;TYPE:SUPPORT, ;TYPE:SUPPORT-INTERFACE
-    # Cura: ;TYPE:SUPPORT, ;TYPE:SUPPORT-INTERFACE
-    support_type_pattern = re.compile(
-        r';\s*TYPE:\s*(?:Support|SUPPORT|Support\s+interface|SUPPORT\s*[-_]?INTERFACE)',
-        re.IGNORECASE
-    )
-    
-    # Pattern to match any TYPE: comment
-    type_pattern = re.compile(r';\s*TYPE:', re.IGNORECASE)
+    modified_content = content
     
     support_sections_commented = 0
     i = target_line
@@ -826,7 +1038,7 @@ def comment_out_support_sections_after_target(content, target_line):
         line = modified_content[i]
         
         # Check if this line starts a support section
-        if support_type_pattern.search(line):
+        if _SUPPORT_TYPE_RE.search(line):
             # Found the FIRST support section - comment it out until we find a non-support TYPE
             section_start = i
             
@@ -837,8 +1049,8 @@ def comment_out_support_sections_after_target(content, target_line):
             while j < len(modified_content):
                 next_line = modified_content[j]
                 
-                if type_pattern.search(next_line):
-                    if not support_type_pattern.search(next_line):
+                if _TYPE_COMMENT_RE.search(next_line):
+                    if not _SUPPORT_TYPE_RE.search(next_line):
                         found_end = True
                         break
                 
@@ -889,6 +1101,130 @@ def extract_resume_preamble(content_lines, target_line):
     preamble.append('G11 ; unretract (resume)')
     return '\n'.join(preamble) + '\n'
 
+def extract_resume_state(content_lines, target_line):
+    """Find extrusion mode (M82/M83) and first SET_PRESSURE_ADVANCE before the target line.
+    Returns (mode_line, pa_line) where each may be None.
+    """
+    mode_line = None
+    pa_line = None
+    m_re = re.compile(r'^\s*(M82|M83)\b', re.IGNORECASE)
+    pa_re = re.compile(r'^\s*SET_PRESSURE_ADVANCE\b', re.IGNORECASE)
+    for i in range(min(target_line, len(content_lines))):
+        stripped = content_lines[i].strip()
+        if not stripped or stripped.startswith(';'):
+            continue
+        if mode_line is None:
+            m = m_re.search(stripped)
+            if m:
+                mode_line = m.group(1).upper()
+        if pa_line is None and pa_re.search(stripped):
+            pa_line = stripped
+    return mode_line, pa_line
+
+def find_layer_entry_region(content, target_line, max_scan=600):
+    """Locate the slicer's lead-in region for the target layer (retract/wipe/lift/travel/prime).
+    
+    Returns (entry_start, entry_end, travel_x, travel_y) or None.
+    - entry_start: first executable line after the LAYER_CHANGE comment header
+    - entry_end: index of the first ';TYPE:' line (start of actual feature printing)
+    - travel_x/travel_y: first pure-travel XY target (G0/G1 with X and Y, no E) in the region
+    """
+    n = len(content)
+    end = min(n, target_line + max_scan)
+    _num = r'-?(?:\d+\.?\d*|\.\d+)'
+    type_re = re.compile(r';\s*TYPE:', re.IGNORECASE)
+    move_re = re.compile(r'^\s*G[01]\b', re.IGNORECASE)
+    x_re = re.compile(r'\bX(' + _num + r')', re.IGNORECASE)
+    y_re = re.compile(r'\bY(' + _num + r')', re.IGNORECASE)
+    e_re = re.compile(r'\bE(' + _num + r')', re.IGNORECASE)
+    
+    entry_end = None
+    for j in range(target_line, end):
+        if type_re.search(content[j]):
+            entry_end = j
+            break
+    if entry_end is None:
+        return None
+    
+    entry_start = None
+    for j in range(target_line, entry_end):
+        stripped = content[j].strip()
+        if stripped and not stripped.startswith(';'):
+            entry_start = j
+            break
+    if entry_start is None:
+        return None
+    
+    # Prefer a pure travel move (X and Y, no extrusion) = move to the resume position
+    travel_x = travel_y = None
+    for j in range(entry_start, entry_end):
+        stripped = content[j].strip()
+        if not stripped or stripped.startswith(';') or not move_re.match(stripped):
+            continue
+        xm, ym, em = x_re.search(stripped), y_re.search(stripped), e_re.search(stripped)
+        if xm and ym and em is None:
+            travel_x, travel_y = float(xm.group(1)), float(ym.group(1))
+            break
+    # Fallback: first XY move of any kind
+    if travel_x is None:
+        for j in range(entry_start, entry_end):
+            stripped = content[j].strip()
+            if not stripped or stripped.startswith(';') or not move_re.match(stripped):
+                continue
+            xm, ym = x_re.search(stripped), y_re.search(stripped)
+            if xm and ym:
+                travel_x, travel_y = float(xm.group(1)), float(ym.group(1))
+                break
+    
+    return entry_start, entry_end, travel_x, travel_y
+
+def find_first_live_xy(content, start_line, max_scan=12000):
+    """First executable G0/G1 that still has X and Y after skipping/commenting."""
+    _num = r'-?(?:\d+\.?\d*|\.\d+)'
+    x_re = re.compile(r'\bX(' + _num + r')', re.IGNORECASE)
+    y_re = re.compile(r'\bY(' + _num + r')', re.IGNORECASE)
+    move_re = re.compile(r'^\s*G[01]\b', re.IGNORECASE)
+    end = min(len(content), start_line + max_scan)
+    for j in range(start_line, end):
+        stripped = content[j].strip()
+        if not stripped or stripped.startswith(';') or not move_re.match(stripped):
+            continue
+        xm, ym = x_re.search(stripped), y_re.search(stripped)
+        if xm and ym:
+            return float(xm.group(1)), float(ym.group(1))
+    return None, None
+
+def build_resume_start_sequence(actual_z, mode_line, pa_line, custom_header, travel_x, travel_y, xy_feed=9000):
+    """Resume entry that does not move Z/bed.
+
+    SET_KINEMATIC_POSITION is Z only. Do not lie about X/Y: if the user homed XY,
+    setting kinematic XY to the print position makes G1 X Y a no-move (stays at home).
+    """
+    seq = [
+        '; === RESUME START SEQUENCE (Layer Resume Tool) ===\n',
+        '; Z/bed is NOT moved. Stay at current physical height.\n',
+        '; Home X and Y before starting. Do not SET_KINEMATIC_POSITION on X/Y.\n',
+        '; PAUSE: PAUSE macros must hop Z with G91 (relative). G90 G1 Z10 would drive the bed to Z=10.\n',
+        f'SET_KINEMATIC_POSITION Z={actual_z:.3f} '
+        '; tell Klipper Z is already at resume height (no motion)\n',
+        'G90 ; absolute XY positioning\n',
+    ]
+    if mode_line:
+        seq.append(f'{mode_line} ; extrusion mode from original\n')
+    if pa_line:
+        seq.append(pa_line + '\n')
+    seq.append('G92 E0 ; reset extruder origin\n')
+    if travel_x is not None and travel_y is not None:
+        seq.append(
+            f'G1 X{travel_x:.3f} Y{travel_y:.3f} F{xy_feed} '
+            '; from homed XY to first live print position; Z stays put\n'
+        )
+        seq.append('M400 ; wait for XY so pause can interrupt cleanly after this move\n')
+    seq.extend(split_gcode_lines(filter_custom_header_no_z(custom_header)))
+    seq.append('G11 ; unretract (resume)\n')
+    seq.append('; === END RESUME START SEQUENCE ===\n')
+    return seq
+
 def find_target_layer_line_by_z_height(layer_changes, target_z):
     """Find the layer change line where the target Z height is reached or exceeded."""
     for layer_info in layer_changes:
@@ -896,8 +1232,8 @@ def find_target_layer_line_by_z_height(layer_changes, target_z):
             return layer_info['lineNumber'] - 1, layer_info['zHeight']  # Convert to 0-based index
     return None, None
 
-def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exec_blocks_count, original_filename, skip_support=False, support_sections_commented=0):
-    """Add a header comment with resume information."""
+def build_resume_header_lines(target_z, actual_z, g28_count, z_moves_count, exec_blocks_count, original_filename, skip_support=False, support_sections_commented=0):
+    """Build resume info comment lines (not including slicer header blocks)."""
     header_lines = [
         "; ================================\n",
         "; MODIFIED GCODE - RESUME PRINT\n",
@@ -920,6 +1256,7 @@ def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exe
         "; IMPORTANT: Manually position nozzle near resume point\n",
         "; IMPORTANT: Ensure filament is loaded and primed\n",
         "; IMPORTANT: ALL Z-moves before target layer have been removed\n",
+        "; IMPORTANT: Resume does not command Z — bed stays at current height\n",
     ])
     
     if skip_support:
@@ -932,98 +1269,126 @@ def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exe
         "\n"
     ])
     
-    return header_lines + content
+    return header_lines
 
-def process_gcode_content(content_str, target_z_height, original_filename='unknown.gcode', skip_support=False, custom_header=''):
-    """Process G-code content and return modified content with statistics.
+
+def add_resume_header(content, target_z, actual_z, g28_count, z_moves_count, exec_blocks_count, original_filename, skip_support=False, support_sections_commented=0):
+    """Legacy helper: prepend resume header (prefer build_resume_header_lines + insert_lines_at)."""
+    return build_resume_header_lines(
+        target_z, actual_z, g28_count, z_moves_count, exec_blocks_count,
+        original_filename, skip_support, support_sections_commented
+    ) + content
+
+def write_gcode_output(output_filepath, lines):
+    """Write processed G-code line-by-line; use temp file + rename for a complete file on disk."""
+    tmp_path = output_filepath + '.tmp'
+    with open(tmp_path, 'w', encoding='utf-8', buffering=1024 * 1024) as f:
+        for line in lines:
+            f.write(line)
+            if not line.endswith('\n'):
+                f.write('\n')
+    os.replace(tmp_path, output_filepath)
+    os.chmod(output_filepath, 0o644)
+
+
+def process_gcode_content(content_str, target_z_height, original_filename='unknown.gcode', skip_support=False, custom_header='', output_filepath=None):
+    """Process G-code content and write output with statistics.
     
     Args:
         content_str: G-code content as string
         target_z_height: Target Z height to resume from
         original_filename: Original filename
         skip_support: If True, skip printing support sections after target layer
-        custom_header: Optional G-code string to place at the very top (replaces original header)
+        custom_header: Optional G-code string to place at the very top
+        output_filepath: If set, write output directly to this path
     """
-    content = content_str.split('\n')
+    if not content_str:
+        raise ValueError("G-code content is empty")
+    content = content_str.splitlines()
     
-    # Find the start point (first "; Filament gcode")
-    filament_start = find_filament_gcode_start(content)
-    if filament_start is None:
-        filament_start = 0
+    skip_start = find_skip_start(content)
     
-    # Find all layer changes with Z heights (always detect all layers, including support)
-    layer_changes = find_layer_change_heights('\n'.join(content))
-    if not layer_changes:
-        # Fallback to old method if no LAYER_CHANGE comments found
-        layer_lines = find_layer_lines(content)
-        if not layer_lines:
-            raise ValueError("No Z-axis movements or layer changes found in the file.")
-        
-        # Convert old format to new format for compatibility
-        for line_num, z_height, line_content in layer_lines:
-            target_line = line_num
-            actual_z = z_height
-            if z_height >= target_z_height:
-                break
-        else:
-            max_z = max(z for _, z, _ in layer_lines)
+    target_line, actual_z = find_target_layer_line(content, target_z_height)
+    if target_line is None:
+        if actual_z is not None:
             raise ValueError(
-                f"Target Z height {target_z_height}mm exceeds the maximum Z height in the file ({max_z}mm). "
-                f"Please enter a Z height between 0.0mm and {max_z}mm."
+                f"Target Z height {target_z_height}mm exceeds the maximum Z height in the file ({actual_z}mm). "
+                f"Please enter a Z height between 0.0mm and {actual_z}mm."
             )
-    else:
-        # Find the target layer using LAYER_CHANGE comments
-        target_line, actual_z = find_target_layer_line_by_z_height(layer_changes, target_z_height)
+        target_line, max_or_z = find_target_layer_line_legacy(content, target_z_height)
         if target_line is None:
-            max_z = max(layer['zHeight'] for layer in layer_changes)
+            if max_or_z is None:
+                raise ValueError("No Z-axis movements or layer changes found in the file.")
             raise ValueError(
-                f"Target Z height {target_z_height}mm exceeds the maximum Z height in the file ({max_z}mm). "
-                f"Please enter a Z height between 0.0mm and {max_z}mm."
+                f"Target Z height {target_z_height}mm exceeds the maximum Z height in the file ({max_or_z}mm). "
+                f"Please enter a Z height between 0.0mm and {max_or_z}mm."
             )
+        actual_z = max_or_z
     
-    # Extract resume preamble (SET_PRESSURE_ADVANCE + G11) from original content before we modify it
-    resume_preamble = extract_resume_preamble(content, target_line)
+    # Capture extrusion mode + pressure advance from ORIGINAL gcode before commenting.
+    mode_line, pa_line = extract_resume_state(content, target_line)
     
-    # ONLY process content BEFORE the target line
-    # Remove G28 commands only before target line
     content, g28_count = remove_g28_commands_before_target(content, target_line)
-    
-    # Comment out ALL Z moves before target line (including in executable blocks)
+    content, start_macro_count = comment_out_start_macros_before_target(content, target_line)
+    g28_count += start_macro_count
     content, z_moves_count, exec_blocks_count = comment_out_all_z_moves_before_target(content, target_line)
+    comment_out_layers(content, skip_start, target_line - 1)
     
-    # Comment out the specified range (everything before the target layer)
-    modified_content = comment_out_layers(content, filament_start, target_line - 1)
-    
-    # If skip_support is enabled, comment out support sections after the target layer
     support_sections_commented = 0
     if skip_support:
-        modified_content, support_sections_commented = comment_out_support_sections_after_target(
-            modified_content, target_line
-        )
+        content, support_sections_commented = comment_out_support_sections_after_target(content, target_line)
     
-    # Add informative header
-    modified_content = add_resume_header(modified_content, target_z_height, actual_z, 
-                                       g28_count, z_moves_count, exec_blocks_count, original_filename, 
-                                       skip_support, support_sections_commented)
+    # Keep slicer HEADER/thumbnail blocks at file start for Moonraker/Mainsail metadata.
+    # Insert resume comment header before EXECUTABLE_BLOCK_START, not at line 0.
+    metadata_end = find_metadata_end_line(content)
+    header_lines = build_resume_header_lines(
+        target_z_height, actual_z,
+        g28_count, z_moves_count, exec_blocks_count, original_filename,
+        skip_support, support_sections_commented
+    )
+    insert_lines_at(content, metadata_end, header_lines)
+    if metadata_end <= target_line:
+        target_line += len(header_lines)
     
-    # Calculate statistics
-    commented_lines = target_line - filament_start
+    # Resume entry does not command Z. PRINT_START / homing / slicer Z hops are
+    # removed so the bed stays at the physical height you already set.
+    # SET_KINEMATIC_POSITION tells Klipper that height without moving.
+    region = find_layer_entry_region(content, target_line)
+    if region is not None:
+        entry_start, entry_end, _hop_x, _hop_y = region
+        for k in range(entry_start, entry_end):
+            stripped = content[k].strip()
+            if stripped and not stripped.startswith(';'):
+                content[k] = '; RESUME-REPLACED: ' + content[k]
     
-    # Generate output filename (use basename in case original_filename is a full path)
+    next_layer = find_next_layer_change(content, target_line)
+    strip_z_from_moves(content, target_line, next_layer)
+    
+    # After skipping support and replacing the slicer hop, go to the first live XY
+    # (not the hop onto skipped support). User homes XY; do not SET_KINEMATIC X/Y.
+    travel_x, travel_y = find_first_live_xy(content, target_line)
+    
+    start_sequence = build_resume_start_sequence(
+        actual_z, mode_line, pa_line, custom_header, travel_x, travel_y
+    )
+    insert_lines_at(content, target_line, start_sequence)
+    
+    commented_lines = target_line - skip_start
     base_name = os.path.splitext(os.path.basename(original_filename))[0]
     output_filename = f"{base_name}_resume_Z{target_z_height}mm.gcode"
     
-    # Build final output: custom header (optional) + resume preamble (pressure advance + G11) + body
-    body_content = '\n'.join(modified_content)
-    if resume_preamble:
-        body_content = resume_preamble + '\n' + body_content
-    if custom_header:
-        body_content = custom_header.rstrip() + '\n\n' + body_content
+    if output_filepath is None:
+        output_filepath = os.path.join(_GCODES_DIR, output_filename)
+    
+    out_dir = os.path.dirname(output_filepath)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    write_gcode_output(output_filepath, content)
     
     return {
-        'content': body_content,
         'filename': output_filename,
-            'stats': {
+        'filepath': output_filepath,
+        'stats': {
             'g28_count': g28_count,
             'z_moves_count': z_moves_count,
             'exec_blocks_count': exec_blocks_count,
@@ -1031,7 +1396,7 @@ def process_gcode_content(content_str, target_z_height, original_filename='unkno
             'actual_z': actual_z,
             'target_z': target_z_height,
             'original_filename': original_filename,
-            'total_lines': len(modified_content),
+            'total_lines': len(content),
             'target_line': target_line,
             'support_sections_skipped': support_sections_commented if skip_support else 0
         }
